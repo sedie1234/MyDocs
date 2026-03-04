@@ -1,0 +1,8 @@
+- Google의 XLA(Accelerated Linear Algebra)에서 시작
+- HLO(High-Level Optimizer/Operation)은 XLA의 컴파일러가 사용하는 IR(Intermediate Representation)
+- 컴파일러가 모델을 이해하고 최적화하기 위한 중간단계
+- 추후 PyTorch/XLA, TensorFlow/XLA 등 다양한 프레임워크별로 HLO를 개발하여 사용
+- 다양한 프레임워크에 공통된 표현으로 사용할 수 있도록 정리하여 새로 나온 것이 StableHLO이며, 프레임워크와 컴파일러 사이를 표현하는 중간언어의 표준이 됨.
+- StableHLO는 MLIR을 output으로 가짐
+- 수학적으로 잘 정의된 텐서 연산 언어
+- 반복문, 포인터 등이 제외된 텐서 연산으로만 구성되어 컴파일러가 이해하기 쉬운 구조로 되어 있음
