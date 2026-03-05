@@ -5,8 +5,8 @@
 - 예시로 convolution의 경우, 최적화를 위해 linalg의 루프로 만들어버림. 
 - 이것을 해결하고자 앞쪽의 plugin에서 일찍이 custom IR로 변환하는 경우 IREE의 최적화를 적용받지 못할 수 있다. (필요없는 연산 제거가 대표적)
 - IREE의 옵션을 보면 --iree-global-opt-experimental-disable-conv-generalization과 같은 옵션이 있다. 이 옵션을 설정하면 이런 패스를 없애거나 순서를 뒤로 미룰 수 있다. (아래 그림은 옵션 여부에 따른 전/후)
-![[Pasted image 20260128144858.png]]
-![[Pasted image 20260128144926.png]]
+![Pasted image 20260128144858](https://imgs.hwan123.synology.me:19999/AICompiler/Pasted image 20260128144858.png)
+![Pasted image 20260128144926](https://imgs.hwan123.synology.me:19999/AICompiler/Pasted image 20260128144926.png)
 - 옵션 설정을 하면 conv가 남아있고, 하드웨어용 IR과 1:1 매칭을 할 수 있다. 
 - 이런 경우를 위해 iree의 compile 옵션을 정리한다. 옵션은 버전마다 많이 바뀌는 것으로 보여, 3.9.0 버전을 기준으로 작성함
 

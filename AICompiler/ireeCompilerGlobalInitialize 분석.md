@@ -1,6 +1,6 @@
 - 함수를 들어가면, 아래 Globalnit 함수가 등장
 - 이 함수에서 모든 pass, target, dialect, pass 들과 plugin으로 개발한 dialect와 pass들도 호출되는 것을 볼 수 있음
-  ![[Global_Init.png]]
+  ![Global_Init](https://imgs.hwan123.synology.me:19999/AICompiler/Global_Init.png)
 - 해당 함수들을 탐색하면 어떤 Dialect 및 Pass들이 등록되어 있는지, target이나 plugin을 등록하는 방법이 무엇인지 찾을 수 있을 것
 
 ## 1. registerAllPasses
@@ -505,4 +505,4 @@ registerIreeDialects
 
 ## 4. registerLLVMIRTranslations
 - LLVM project에서 제공되는 translations를 등록
-  ![[register_llvm_translations.png]]
+  ![register_llvm_translations](https://imgs.hwan123.synology.me:19999/AICompiler/register_llvm_translations.png)

@@ -93,11 +93,11 @@ extern "C" bool iree_register_compiler_plugin_amd_aie(
 ```
 
 - iree-amd-aie 프로젝트 구조 참고
-       ![[iree-air-aie-architecture 2.png|600]]
+       <img src="https://imgs.hwan123.synology.me:19999/AICompiler/iree-air-aie-architecture 2.png" width="600">
 
 
 - plugin 적용 위치
-![[Apply_Plugin.png]]
+![Apply_Plugin](https://imgs.hwan123.synology.me:19999/AICompiler/Apply_Plugin.png)
 
 # 2. Plugin 동작의 이해
 
