@@ -82,7 +82,7 @@ keti
 
 ### 2.1.1 [[QDQFusionPass]]
 - quantize와 dequantize를 묶어낸다.
-- constructor = infeteron_v2::createQDQFusionPass()
+- constructor = infetron_v2::createQDQFusionPass()
 
 ### 2.1.2 [[OpFusionPass]]
 - quantize와 dequantize를 제외한 다른 풀어진 함수들을 합성한다.

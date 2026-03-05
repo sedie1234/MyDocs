@@ -36,7 +36,7 @@
 ```
 ```
 [변경 후]
-      %4 = inf_cap.dequantize %in : f32 to i8
+      %4 = inf_cap.dequantize %in : i8 to f32
 ```
 ## 1.3 Dequant2Pattern
 - back tracking 방식으로 찾는다.
@@ -51,7 +51,7 @@
 ```
 ```
 [변경 후]
-      %3 = inf_cap.dequantize %in : f32 to i8
+      %3 = inf_cap.dequantize %in : i8 to f32
 ```
 
 ## 1.4 AddZeropointFusionPattern
