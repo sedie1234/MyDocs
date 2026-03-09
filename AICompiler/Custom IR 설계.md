@@ -38,7 +38,8 @@ keti
 
 ## 1.2 INF_ISA Layer (infetron-ISA layer)
 - 계층 개념 : 하드웨어의 opcode들로 구성됨. 단, 오로지 연산만을 고려한다. 각 연산이 걸리는 시간을 이 때, 기록하며, 최적화를 수행하여, 어떤 순서로 어떤 코어에 할당할 지도 이 계층에서 결정한다.
-- Ops : Ops는 opcode와 1대1로 대응되도록 구축한다. a코어와 p코어는 별개의 Ops를 가지도록 한다. ~~같은 연산이어도 코어가 다르면 다른 Ops를 사용한다. 연산의 특성을 확인하고, a코어와 p코어를 나눈다. 애매한 경우 우선은 n코어로 두고, 나중에 분류한다.~~ PCore는 ACore의 superset으로, 기본적으로 PCore로 분류하고, ACore로 돌릴 수 있는 연산은 ACore Attributes를 부여한다. (ACore / PCore 완벽호환 되는지 검증 필요)
+- Ops : Ops는 opcode와 1대1로 대응되도록 구축한다. 이 때, 데이터 포맷이나 shape까지도 모두 opcode와 대응되도록 한다. a코어와 p코어는 별개의 Ops를 가지도록 한다. ~~같은 연산이어도 코어가 다르면 다른 Ops를 사용한다. 연산의 특성을 확인하고, a코어와 p코어를 나눈다. 애매한 경우 우선은 n코어로 두고, 나중에 분류한다.~~ ~~PCore는 ACore의 superset으로, 기본적으로 PCore로 분류하고, ACore로 돌릴 수 있는 연산은 ACore Attributes를 부여한다. (ACore / PCore 완벽호환 되는지 검증 필요)~~ -> PCore, ACore의 한 번에 처리하는 데이터의 크기가 다르기 때문에 서로 다른 명령어로 가져가야 함. 
+- PCore는 ACore의 superset이라고는 하지만, 한 번에 처리하는 데이터의 크기가 다르기 때문에 서로 독립된 코어로 보는 것이 맞다. 단, 1개의 쌍은 서로 데이터 이동 속도가 빠르기 때문에 1개의 쌍으로 관리할 필요는 있다. 
 - Ops는 arguments도 하드웨어의 제한을 크게 받아 shape과 data layout 등 정보들을 하드웨어 제한을 따른다.
 - ~~VLIW로 묶을 수 있는 연산들은 VLIW로 묶어낸다. VLIW로 묶는 것은 vliw_pack과 vliw_unpack이라는 Ops를 선언하여 그 사이를 고정시켜 그 전체가 하나의 VLIW 명령어임을 표시한다.~~ VLIW는 통상적인 개념의 VLIW가 아니라, 하나의 opcode를 실행하기 위해 필요한 정보들을 하나의 매우 긴 word에 담는 것이 목적이므로 필요한 정보를 순차적으로 채워가기로 한다.
 - 기본적인 scheduling 전략
@@ -64,7 +65,7 @@ keti
 - Ops : 2가지 Dialect를 활용한다. memory 정보와 각 주소에 어떤 데이터를 사용할 지를 관리하는 Dialect와 instruction queue를 관리하는 Dialect로 나눈다.
 - memory관련 Dialect : Shared Memory와 Unified Buffer를 정보를 가지고 어느 시점에 어떤 데이터가 올라와 있는지 정보를 기록한다. arith로 된 값은 그대로 두고, 그 값을 arguments로 취급한다. arith로 정의된 값은 0 clock 시점에 미리 올라가 있는 정보로 두고, 그 구간은 read only로 취급한다. 중간에 생성되는 buffer들은 timing에 따라 상태를 엄격하게 관리한다. -> 시작시간부터 시간의 흐름에 따라 메모리의 사용을 관리
 - instruction queue를 관리하는 Dialect : ISA Layer에서 region을 나눠뒀으므로 이것을 그대로 따르면 될 듯. (Dialect가 별도로 필요할 지 여부는 고민 중)
-- memory에서 특별히 관리해야 할 것은 residual  data와 같이 오랜시간동안 버퍼위에서 유지해야하는 값이 문제. -> UB사이를 돌게 만드는 것보다는 SM에 두는 것이 효율적이겠지만 공간이 충분하지 않다면?
+- memory에서 특별히 관리해야 할 것은 residual  data와 같이 오랜시간동안 버퍼위에서 유지해야하는 값이 문제. -> UB사이를 돌게 만드는 것보다는 SM에 두는 것이 효율적이겠지만 공간이 충분하지 않다면? -> 하드웨어에 의견을 요청해 둔 상태
 
 ~~##1.3 INF_Q Layer (infetron-Queue layer)~~
 - ~~계층 개념 : 하드웨어의 가상의 queue를 객체화한 계층. 가상의 통합 queue와 코어관리자, DRAM을 만들어 시간과 데이터의 이동을 타이트하게 관리한다.~~
@@ -202,6 +203,14 @@ keti
 
 ## 2.7 Serialization PassPipeline
 - IREE의 정규식으로 serialization을 수행
+
+# 3. 결과물
+
+| 파일 | 설명 |
+|---|---|
+| `out_bin.ihnn` | binary — 명령어 queue 및 실행에 필요한 메타데이터 포함 |
+| `plan.json` | plan — 하드웨어 메모리 사용 정보 |
+| `out.mlir` | sub tool과 결합하여 profile + Debug 파일 생성에 활용 |
 
 
 
