@@ -37,7 +37,7 @@ void LinalgToHW1Pass::runOnOperation() {
 $ ./iree-compile ~/workspace/testStage/work1/yolov10_top3.onnx.mlir --iree-hal-target-backends=keti_hw1 --mlir-print-ir-after-all --mlir-disable-threading --compile-to=executable-targets --iree-global-opt-experimental-disable-conv-generalization --iree-opt-generalize-matmul=false --iree-dispatch-creation-enable-aggressive-fusion=false --iree-opt-level=O0 --mlir-elide-elementsattrs-if-larger=32 -o ~/workspace/testStage/work1/out.vmfb > ~/workspace/testStage/work1/test_pipeline3.mlir 2>&1
 ```
 4) 출력파일 확인하기
-![Pasted image 20260129101809](https://imgs.hwan123.synology.me:19999/AICompiler/Pasted image 20260129101809.png)
+![Pasted image 20260129101809](Pasted%20image%2020260129101809.png)
 # 2. 나온 내용들 (고려할 사항들)
 ## \#1
 - IREE의 최적화를 거치고, target plugin이 mlir을 받을 차례가 되면 상위 연산(conv, sigmoid 수준의 표현)이 낮은 수준의 연산들과 loop를 통해 나오게 됨. 

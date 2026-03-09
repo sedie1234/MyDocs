@@ -18,7 +18,7 @@
   (여기서 지우는 것은 안된다. Dequant의 output이 다른 노드에서도 활용될 수 있기 때문에, 다른 패턴을 만들어 지워야 한다.)
 
 
-![QdqToQop](https://imgs.hwan123.synology.me:19999/AICompiler/QdqToQop.png)
+![QdqToQop](QdqToQop.png)
 
 ### 1.1.1 일반 Ops
 - 일반적인 Ops들은 Attributes로 quantization 변수를 넣을 수 있게 해뒀기 때문에 새로운 QuantOp를 만들지 않고, Attributes를 추가하고, input과 output을 변경해주면 된다. 
