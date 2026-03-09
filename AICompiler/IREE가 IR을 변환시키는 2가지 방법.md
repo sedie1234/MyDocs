@@ -129,8 +129,8 @@ util.func public @fold_full_insert_into_extract(
     %source: tensor<8x?xf32>,
     %dest: tensor<10x?xf32>,
     %size: index) -> tensor<8x?xf32> {
-  %extract = tensr.extract_slice %dest [1, 1] [8, %size] [1, 1] : tensor<10x?xf32> to tensor<8x?xf32>
-  %insert = tensor.insert_slice %sorce into %extract [0, 0] [8, %size] [1, 1] : tensor<8x?xf32> into tensor<8x?xf32>
+  %extract = tensor.extract_slice %dest [1, 1] [8, %size] [1, 1] : tensor<10x?xf32> to tensor<8x?xf32>
+  %insert = tensor.insert_slice %source into %extract [0, 0] [8, %size] [1, 1] : tensor<8x?xf32> into tensor<8x?xf32>
   util.return %insert : tensor<8x?xf32>
 }
 ```
