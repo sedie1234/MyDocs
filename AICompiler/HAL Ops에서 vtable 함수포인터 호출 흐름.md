@@ -16,7 +16,7 @@
 ## 2.1 vtable 객체 호출
 - vtable도 그룹을 나누어 그룹마다 다른 구조체를 활용한다. 
 - vm symbol로부터 적절한 구조체 호출의 정의
-- iree/runtime/iree.natvis에 vtable 그룹별 구조체 구성이 기술되어 있다. (단, 이 파일은 Visual Studio/VSCode 디버거 시각화 파일로, runtime 실행과는 무관하며 구조 파악을 위한 참고 자료임)
+- iree/runtime/iree.natvis에 vtable 그룹별 구조체 구성이 기술되어 있다. (이 파일은 디버거 시각화용이지만, 여기에 정의된 vtable 구조체와 함수들은 runtime 실행 도중 실제로 매칭되어 호출됨)
 ![Pasted image 20260123133441](Pasted%20image%2020260123133441.png)
 
 ## 2.2 각 그룹의 function 호출
