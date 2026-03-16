@@ -6,41 +6,59 @@
 
 ## 1.1 Conv
 
-### 1.1.1 IREEToUnsymetricQConvPattern
+### 1.1.1 IREEToQConvPattern
 - generic을 잡고, yield부터 back tracking
-- IREEToSymetricQConvPattern과 결합 = IREEToQConvPattern
+- Asymmetric(subi 존재, ZP≠0)과 Symmetric(subi 없음, ZP=0)을 하나의 패턴에서 모두 처리
+- 6D(3×3+ conv, [P,P,P,R,R,R])와 4D(1×1 conv, [P,P,P,R])를 모두 매칭
+- 6D: indexing_maps input(d3, d1\*s+d4, d2\*s+d5), weight(d0,d3,d4,d5), output(d0,d1,d2). stride는 affine expr에서 추출.
+- 4D: indexing_maps input(d3,d1,d2), weight(d0,d3), output(d0,d1,d2). stride는 항상 1 (kernel 1×1이므로 affine expr에 stride 항 없음). 4D를 매칭하지 않으면 PostOpFusion의 conv_bias 매칭이 연쇄 실패.
+- body 패턴 (6D/4D 공통): addi←{out, muli←{subi(extsi, zp), extsi}} (asymmetric) 또는 addi←{out, muli←{extsi, extsi}} (symmetric)
 - benefit = 10
 
 ```
-[변환 전]
-    %12 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2, d3, d4, d5) -> (d3, d1 * 2 + d4, d2 * 2 + d5)>, affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d3, d4, d5)>, affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d1, d2)>], iterator_types = ["parallel", "parallel", "parallel", "reduction", "reduction", "reduction"]} ins(%inserted_slice, %cst_0 : tensor<3x642x642xi8>, tensor<16x3x3x3xi8>) outs(%10 : tensor<16x320x320xi32>) {
-    ^bb0(%in: i8, %in_10: i8, %out: i32):
-      %14 = arith.extsi %in : i8 to i32
-      %15 = arith.subi %14, %c-128_i32 : i32
-      %16 = arith.extsi %in_10 : i8 to i32
-      %17 = arith.muli %15, %16 : i32
-      %18 = arith.addi %out, %17 : i32
-      linalg.yield %18 : i32
-    } -> tensor<16x320x320xi32>
+[변환 전 — Asymmetric 3×3 conv (6D)]
+    %12 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2, d3, d4, d5) -> (d3, d1 * 2 + d4, d2 * 2 + d5)>, affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d3, d4, d5)>, affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d1, d2)>], iterator_types = ["parallel", "parallel", "parallel", "reduction", "reduction", "reduction"]} ins(%inserted_slice, %cst_0 : tensor<3x642x642xi8>, tensor<16x3x3x3xi8>) outs(%10 : tensor<16x320x320xi32>) {
+    ^bb0(%in: i8, %in_10: i8, %out: i32):
+      %14 = arith.extsi %in : i8 to i32
+      %15 = arith.subi %14, %c-128_i32 : i32
+      %16 = arith.extsi %in_10 : i8 to i32
+      %17 = arith.muli %15, %16 : i32
+      %18 = arith.addi %out, %17 : i32
+      linalg.yield %18 : i32
+    } -> tensor<16x320x320xi32>
 ```
 ```
-[변환 후]
-%12 = inf_cap.conv2d %inserted_slice, %cst_0 { dilation_h = 1 : i64, dilation_w = 1 : i64, stride_h = 2 : i64, // indexing_map의 'd1 * 2'에서 추출 stride_w = 2 : i64, // indexing_map의 'd2 * 2'에서 추출 pad_h = 0 : i64, pad_w = 0 : i64, quant_info = #inf_cap.quant<scale = 1.0, zero_point = -128>, // subi에서 추출 layout_hint = #inf_cap.layout<NCHW> // 필요시 추가 } : (tensor<3x642x642xi8>, tensor<16x3x3x3xi8>) -> tensor<16x320x320xi32>
+[변환 후 — 3×3 conv]
+%12 = inf_cap.conv2d %inserted_slice, %cst_0 { dilation_h = 1 : i64, dilation_w = 1 : i64, stride_h = 2 : i64, stride_w = 2 : i64, pad_h = 0 : i64, pad_w = 0 : i64, quant_info = #inf_cap.quant<scale = 1.0, zero_point = -128>, layout_hint = #inf_cap.layout<NCHW> } : (tensor<3x642x642xi8>, tensor<16x3x3x3xi8>) -> tensor<16x320x320xi32>
 ```
 
-### 1.1.2 IREEToSymetricQConvPattern
-- generic을 잡고, yield부터 back tracking
-- IREEToUnsymetricQConvPattern과 결합 = IREEToQConvPattern
-- benefit = 10
 ```
-    %12 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2, d3, d4, d5) -> (d3, d1 * 2 + d4, d2 * 2 + d5)>, affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d3, d4, d5)>, affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d1, d2)>], iterator_types = ["parallel", "parallel", "parallel", "reduction", "reduction", "reduction"]} ins(%inserted_slice, %cst_0 : tensor<3x642x642xi8>, tensor<16x3x3x3xi8>) outs(%10 : tensor<16x320x320xi32>) {
-    ^bb0(%in: i8, %in_10: i8, %out: i32):
-      %14 = arith.extsi %in : i8 to i32
-      %15 = arith.extsi %in_10 : i8 to i32
-      %16 = arith.muli %14, %15 : i32
-      %17 = arith.addi %out, %16 : i32
-      linalg.yield %17 : i32
-    } -> tensor<16x320x320xi32>
+[변환 전 — Symmetric 3×3 conv (6D)]
+    %12 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2, d3, d4, d5) -> (d3, d1 * 2 + d4, d2 * 2 + d5)>, affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d3, d4, d5)>, affine_map<(d0, d1, d2, d3, d4, d5) -> (d0, d1, d2)>], iterator_types = ["parallel", "parallel", "parallel", "reduction", "reduction", "reduction"]} ins(%inserted_slice, %cst_0 : tensor<3x642x642xi8>, tensor<16x3x3x3xi8>) outs(%10 : tensor<16x320x320xi32>) {
+    ^bb0(%in: i8, %in_10: i8, %out: i32):
+      %14 = arith.extsi %in : i8 to i32
+      %15 = arith.extsi %in_10 : i8 to i32
+      %16 = arith.muli %14, %15 : i32
+      %17 = arith.addi %out, %16 : i32
+      linalg.yield %17 : i32
+    } -> tensor<16x320x320xi32>
+```
+
+```
+[변환 전 — Asymmetric 1×1 conv (4D)]
+    %240 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2, d3) -> (d3, d1, d2)>, affine_map<(d0, d1, d2, d3) -> (d0, d3)>, affine_map<(d0, d1, d2, d3) -> (d0, d1, d2)>], iterator_types = ["parallel", "parallel", "parallel", "reduction"]} ins(%238, %cst_16 : tensor<32x160x160xi8>, tensor<32x32xi8>) outs(%235 : tensor<32x160x160xi32>) {
+    ^bb0(%in: i8, %in_701: i8, %out: i32):
+      %770 = arith.extsi %in : i8 to i32
+      %771 = arith.subi %770, %c-127_i32 : i32
+      %772 = arith.extsi %in_701 : i8 to i32
+      %773 = arith.muli %771, %772 : i32
+      %774 = arith.addi %out, %773 : i32
+      linalg.yield %774 : i32
+    } -> tensor<32x160x160xi32>
+```
+```
+[변환 후 — 1×1 conv]
+%240 = inf_cap.conv2d %238, %cst_16 { dilation_h = 1 : i64, dilation_w = 1 : i64, stride_h = 1 : i64, stride_w = 1 : i64, pad_h = 0 : i64, pad_w = 0 : i64, quant_info = #inf_cap.quant<scale = 1.0, zero_point = -127>, layout_hint = #inf_cap.layout<NCHW> } : (tensor<32x160x160xi8>, tensor<32x32xi8>) -> tensor<32x160x160xi32>
 ```
 
 ## 1.2 Sigmoid
@@ -50,14 +68,14 @@
 - 아래 flow를 inf_cap.sigmoid로 고친다.
 ```
 [변환 전]
-      %27 = arith.negf %26 : f32
-      %28 = math.exp %27 : f32
-      %29 = arith.addf %28, %cst_6 : f32
-      %30 = arith.divf %cst_6, %29 : f32
+      %27 = arith.negf %26 : f32
+      %28 = math.exp %27 : f32
+      %29 = arith.addf %28, %cst_6 : f32
+      %30 = arith.divf %cst_6, %29 : f32
 ```
 ```
 [변환 후]
-      %30 = inf_cap.sigmoid %29 : f32
+      %30 = inf_cap.sigmoid %29 : f32
 ```
 
 
