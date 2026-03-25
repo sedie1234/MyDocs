@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NPU Sync 설계 제안 검토 - 인터랙티브 애니메이션</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 8px;
+}
+h1 { color: #9b59b6; font-size: 20px; margin: 8px 0; }
+#canvas-container {
+    background: #16213e;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    padding: 6px;
+    margin: 6px 0;
+}
+canvas { border-radius: 8px; display: block; }
+#controls {
+    display: flex; align-items: center; gap: 10px;
+    margin: 8px 0; flex-wrap: wrap; justify-content: center;
+}
+button {
+    background: #2c3e6d; color: white; border: 1px solid #4a6fa5;
+    border-radius: 8px; padding: 7px 16px; font-size: 14px;
+    cursor: pointer; transition: all 0.2s;
+}
+button:hover { background: #4a6fa5; }
+button.active { background: #e74c3c; border-color: #e74c3c; }
+#step-indicator {
+    font-size: 15px; color: #9b59b6; font-weight: bold;
+    min-width: 220px; text-align: center;
+}
+#speed-container { display: flex; align-items: center; gap: 5px; color: #aaa; font-size: 12px; }
+#speed-slider { width: 80px; }
+#description {
+    background: #0f3460; border-radius: 10px; padding: 12px 18px;
+    max-width: 1020px; width: 100%; min-height: 50px;
+    font-size: 14px; line-height: 1.6; color: #ddd;
+    white-space: pre-line;
+}
+</style>
+</head>
+<body>
+<h1>NPU Sync 설계 제안 검토 - 인터랙티브 애니메이션</h1>
+<div id="canvas-container"><canvas id="c" width="1000" height="580"></canvas></div>
+<div id="controls">
+    <button onclick="prevStep()">◀ 이전</button>
+    <span id="step-indicator">1/12</span>
+    <button onclick="nextStep()">다음 ▶</button>
+    <button id="btn-auto" onclick="toggleAuto()">▶▶ 자동재생</button>
+    <div id="speed-container">
+        <span>속도:</span>
+        <input type="range" id="speed-slider" min="0.5" max="3" step="0.25" value="1">
+        <span id="speed-val">1.0x</span>
+    </div>
+</div>
+<div id="description"></div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 1000, H = 580;
+let step = 0, totalSteps = 12;
+let autoPlay = false, autoTimer = null;
+let aT = 0, lastFT = 0, speed = 1.0;
+
+const titles = [
+    "하드웨어 전체 구조",
+    "1. 초기화",
+    "2. NPU 시작 (Runtime Thread)",
+    "3. Layer Start + SM Semaphore Entry 제안",
+    "4. Layer Run + Sync 제안",
+    "5. Layer End + Double Buffering",
+    "6. loop_jump or stop",
+    "7. epoch_commit (코어 간 동기화)",
+    "APPENDIX: Data Hazards (WAR/RAW/WAW)",
+    "APPENDIX: Fan-out 문제",
+    "APPENDIX: Fan-in 문제",
+    "APPENDIX: 동기화 착각 + semaphore id"
+];
+
+const descs = [
+    "Runtime이 SM(Shared Memory)을 통해 데이터를 관리합니다.\n각 코어 쌍(p core + A core)은 자체 UB(Unified Buffer)와 queue를 보유합니다.\nSM 내부에는 Output Buffer, Input Buffer, Temp Buffer 영역이 있습니다.",
+    "① A Core에 weight eFlash (여러 개를 한 번에, 시작주소/크기는 컴파일러 결정)\n② SM에 meta data load (weight 포함, 주소/크기 컴파일러 결정)\n③ queue에 queue bin load (시작위치는 레지스터에 기록)\n④ pc는 stop을 가리킴 (binary 첫 명령어 = stop, 컴파일러 보장)",
+    "Input/Output thread로 NPU를 구동합니다.\n① Start thread: Input Buffer Enable Reg 확인 → 1이면 Input 쓰기\n② Stop Reg = 1이면 0으로 만들고 모든 queue의 pc를 loop_start_pc로 이동\n③ Complete thread: Output Buffer Enable Reg 확인 → 1이면 후처리\nInput SM load 시 SemaPhore Entry 세팅, read_reference_counter는 컴파일타임 결정",
+    "[제안1] SM Semaphore Entry에 reference counter 추가\n• write_ref_cnt(4b): fan-in 해결 (여러 코어가 하나의 데이터 제작)\n• read_ref_cnt(4b): fan-out 해결 (하나의 데이터를 여러 코어 참조)\n• semaphore_id(8b): 동기화 착각 방지\n\n[Layer Start 동작]\n① SM 읽기 시 SemaPhore Entry 확인 (없거나 write_ref_cnt=0이면 읽기 가능)\n② 읽기 완료 후 read_ref_cnt 1 감소\n③ UB 전송 시 handshake (stream tx/rx로 RAW/WAR hazard 해결)",
+    "[제안2] 기존 SM_WAIT_GE / SM_POST 제거 → reference_counter 기반 상호 동작\n• 1:1 semaphore → 1:N 동작 지원\n• 규칙: 쓰기 시 반드시 Entry 설정, 읽기 시 write_ref_cnt=0 확인, semaphore id 일치 필수\n\n[Layer Run] UB 밖으로 데이터 이동을 최소화하여 연산 수행. 내부 동작은 하드웨어 설계에 따름.",
+    "① 먼저 끝난 코어부터 결과 데이터 broadcasting\n② Double Buffering: UB를 반으로 나누어 번갈아 사용\n  - 쓰기 완료 데이터는 읽어가기 전 사용 불가\n  - 다른 영역에서 다음 layer_start 진입 가능",
+    "① loop_end_pc 도착 → Queue Complete Counter + 1\n② layer_count와 비교: 같거나 크면 → stop, 작으면 → loop_start_pc\n③ Queue Complete Counter = 코어 수 → 0 초기화, Loop Counter + 1, Output Buffer Enable = 1\n④ loop_jump는 pc를 loop_start_pc로 이동 (다른 코어가 아직 이전 추론 중이어도 먼저 시작)\n⑤ complete thread가 post-process 수행",
+    "추론과 추론이 겹치는 문제를 epoch_commit으로 해결합니다.\n• queue complete cnt = core 수 → 동기화 지점\n• epoch_interval은 컴파일 옵션 (default = 1)\n• 빠른 코어는 epoch_commit에서 대기, 모든 코어가 도달하면 동시 진행",
+    "SM 내부에서 발생하는 데이터 위험:\n• WAR: 다 쓰지 않았는데 데이터를 읽음\n• RAW: 다 읽지 않았는데 데이터를 씀\n• WAW: 다 쓰지 않았는데 데이터를 씀\n→ stream slot, sync slot으로 해결",
+    "같은 값을 여러 코어가 참조할 때 발생하는 문제:\n① core1이 read → SM_WAIT_GE로 '다 읽었다'고 표시\n② 다른 코어가 새 데이터를 write (다 읽은 줄 알고)\n③ core3이 전혀 다른 데이터를 읽게 됨\n\n해결: semaphore entry에 read_reference_count 추가",
+    "여러 코어가 하나의 데이터를 나누어 작성할 때 (예: concat):\n① core1이 write → SM_POST로 '읽을 준비 됐다'고 표시\n② 아직 다른 코어가 쓰기 중인데 읽어감\n\n해결: semaphore entry에 write_reference_count 추가",
+    "semaphore는 '누가' 쓴 값이고 '누가' 소비하는지 표시가 없어,\n동기화를 착각하고 값을 잘못 가져갈 수 있음.\n\n예: A/B/C 데이터의 쓰기/읽기에서 예상치 못한 지연 발생 시\nB 대신 A 데이터를 읽는 오류 발생\n\n해결: semaphore id 추가 → id가 일치해야만 읽기 가능, 쓰기 완료 시 id 세팅\n(id는 255 넘으면 오버플로우하여 사용)"
+];
+
+// Drawing utilities
+function roundRect(x,y,w,h,r,fill,stroke,lw=2){
+    ctx.beginPath();ctx.roundRect(x,y,w,h,r);
+    if(fill){ctx.fillStyle=fill;ctx.fill();}
+    if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw;ctx.stroke();}
+}
+function drawBox(x,y,w,h,label,color,fs=14,op=0.2){
+    let [r,g,b]=hexToRgb(color);
+    roundRect(x,y,w,h,6,`rgba(${r},${g},${b},${op})`,color,2);
+    ctx.fillStyle=color;ctx.font=`bold ${fs}px sans-serif`;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    let lines=label.split('\n'),lh=fs*1.3,sy=y+h/2-(lines.length-1)*lh/2;
+    lines.forEach((l,i)=>ctx.fillText(l,x+w/2,sy+i*lh));
+}
+function drawArrow(x1,y1,x2,y2,color,lw=2,dash=false){
+    ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=lw;
+    if(dash)ctx.setLineDash([6,4]);
+    ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.setLineDash([]);
+    let a=Math.atan2(y2-y1,x2-x1),hs=7+lw;
+    ctx.beginPath();ctx.moveTo(x2,y2);
+    ctx.lineTo(x2-hs*Math.cos(a-0.4),y2-hs*Math.sin(a-0.4));
+    ctx.lineTo(x2-hs*Math.cos(a+0.4),y2-hs*Math.sin(a+0.4));
+    ctx.closePath();ctx.fill();ctx.restore();
+}
+function drawText(x,y,text,color='#ecf0f1',fs=14,align='center'){
+    ctx.fillStyle=color;ctx.font=`${fs}px sans-serif`;
+    ctx.textAlign=align;ctx.textBaseline='middle';
+    let lines=text.split('\n'),lh=fs*1.4;
+    lines.forEach((l,i)=>ctx.fillText(l,x,y+i*lh));
+}
+function drawDot(x,y,r,color){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}
+function hexToRgb(h){if(h[0]!=='#')return[200,200,200];let v=parseInt(h.slice(1),16);return[(v>>16)&255,(v>>8)&255,v&255];}
+function lerp(a,b,t){return a+(b-a)*Math.min(1,Math.max(0,t));}
+function pulse(t,p=2){return 0.5+0.5*Math.sin(t*Math.PI*2/p);}
+function animDots(x1,y1,x2,y2,color,cnt,t){
+    for(let i=0;i<cnt;i++){let ph=((t*0.5+i/cnt)%1);drawDot(lerp(x1,x2,ph),lerp(y1,y2,ph),4,color);}
+}
+
+const COL={SM:'#3498db',UB:'#2ecc71',UBA:'#4CAF50',UBB:'#2E7D32',COMP:'#e74c3c',
+    DMA:'#f1c40f',Q:'#008080',CORE:'#e67e22',RT:'#E91E63',REG:'#FFD700',
+    SEM:'#FF9800',GR:'#7f8c8d',WH:'#ecf0f1'};
+
+// ── SCENE RENDERERS ──
+
+function S1(t){
+    // Hardware Overview
+    let f=Math.min(1,t*1.5);ctx.globalAlpha=f;
+    // Runtime
+    drawBox(20,30,120,50,'Runtime',COL.RT,14);
+    // SM
+    roundRect(180,30,220,380,8,null,COL.SM,2);
+    drawText(290,20,'SM (Shared Memory)',COL.SM,14);
+    drawBox(195,50,190,55,'Output Buffer','#e74c3c',12);
+    drawBox(195,115,190,55,'Input Buffer','#3498db',12);
+    drawBox(195,180,190,55,'Temp Buffer',COL.GR,12);
+    drawBox(195,250,190,60,'meta data\n(weight)',COL.SEM,11);
+    drawBox(195,320,190,40,'SemaPhore Entry',COL.SEM,11);
+    // Arrow Runtime→SM
+    drawArrow(140,55,180,80,COL.RT,2);
+    // Core pairs
+    let cx=[460,720];
+    for(let i=0;i<2;i++){
+        let x=cx[i];
+        drawBox(x,50,90,40,'p core',COL.CORE,12);drawBox(x+100,50,90,40,'A core',COL.COMP,12);
+        drawBox(x+30,110,130,45,'UB',COL.UB,14);drawBox(x+30,170,130,35,'queue',COL.Q,12);
+        drawArrow(400,150,x+30,130,COL.SM,2);
+    }
+    // Queue structure (right side)
+    let qy=240,qx=750;
+    let qItems=['stop','layer_start','layer_run','layer_run','layer_end','...','epoch_commit','loop_jump'];
+    drawText(qx+50,qy-15,'queue 구조',COL.Q,12);
+    qItems.forEach((item,i)=>{
+        roundRect(qx,qy+i*22,100,20,3,`rgba(0,128,128,0.1)`,COL.Q,1);
+        drawText(qx+50,qy+i*22+10,item,COL.Q,10);
+    });
+    ctx.globalAlpha=1;
+    drawText(500,540,'Runtime → SM → 코어 쌍 (p core + A core + UB + queue)',COL.GR,13);
+}
+
+function S2(t){
+    // Initialization
+    drawBox(50,50,200,250,'SM',COL.SM,18);
+    drawBox(70,120,160,50,'meta data\n(weight)',COL.SEM,12);
+    drawBox(70,190,160,40,'weight',COL.CORE,12);
+    // Acore
+    drawBox(350,50,150,60,'A core',COL.COMP,16);
+    // Arrow weight→Acore
+    let a1=Math.min(1,t*2);if(a1>0){ctx.globalAlpha=a1;drawArrow(250,80,350,80,COL.CORE,3);ctx.globalAlpha=1;}
+    // Queue
+    let qy=50,qx=600;
+    let items=['stop (pc→)','layer_start','layer_run','layer_run','layer_end','...','epoch_commit','loop_jump'];
+    items.forEach((item,i)=>{
+        let col=i===0?'#e74c3c':COL.Q;
+        roundRect(qx,qy+i*30,160,28,4,i===0?'rgba(231,76,60,0.2)':'rgba(0,128,128,0.1)',col,1.5);
+        drawText(qx+80,qy+i*30+14,item,col,12);
+    });
+    // Steps
+    let steps=[
+        ['① A Core에 weight eFlash',COL.CORE],
+        ['② SM에 meta data load (weight 포함)',COL.SM],
+        ['③ queue에 queue bin load',COL.Q],
+        ['④ pc → stop (첫 명령어 = stop, 컴파일러 보장)','#e74c3c'],
+    ];
+    steps.forEach((s,i)=>{
+        let fade=Math.min(1,Math.max(0,t*1.5-i*0.5));
+        ctx.globalAlpha=fade;
+        drawText(60,350+i*30,s[0],s[1],14,'left');
+        ctx.globalAlpha=1;
+    });
+    drawText(400,530,'weight 주소/크기, meta data 주소/크기는 컴파일러가 미리 결정',COL.GR,12);
+}
+
+function S3(t){
+    // NPU Start
+    // Thread 1
+    roundRect(30,40,280,180,8,'rgba(233,30,99,0.08)',COL.RT,2);
+    drawText(170,30,'Thread 1: NPU Start',COL.RT,15);
+    drawText(170,80,'while {',COL.WH,12);
+    drawText(170,100,'  pre-process ...',COL.WH,11);
+    drawText(170,118,'  register check',COL.WH,11);
+    drawText(170,136,'  Input Write',COL.WH,11);
+    drawText(170,154,'}',COL.WH,12);
+    // Thread 2
+    roundRect(690,40,280,180,8,'rgba(33,150,243,0.08)','#2196F3',2);
+    drawText(830,30,'Thread 2: NPU Complete','#2196F3',15);
+    drawText(830,80,'while {',COL.WH,12);
+    drawText(830,100,'  register check',COL.WH,11);
+    drawText(830,118,'  read output',COL.WH,11);
+    drawText(830,136,'  post-process ...',COL.WH,11);
+    drawText(830,154,'}',COL.WH,12);
+    // Registers
+    let regs=['Input Buffer Enable','Output Buffer Enable','Stop','Loop Counter','Queue Complete Counter'];
+    regs.forEach((r,i)=>{
+        let fade=Math.min(1,Math.max(0,t*2-i*0.3));
+        ctx.globalAlpha=fade;
+        drawBox(340,50+i*38,320,34,`Reg: ${r}`,COL.REG,12,0.1);
+        ctx.globalAlpha=1;
+    });
+    // SemaPhore Entry
+    drawBox(340,250,320,35,'SemaPhore Entry',COL.SEM,13,0.15);
+    // Steps
+    let st=Math.min(1,Math.max(0,t*1.5-1));
+    ctx.globalAlpha=st;
+    drawText(50,310,'① Input Buffer Enable = 1 → Input 쓰기',COL.RT,13,'left');
+    drawText(50,340,'② Stop Reg = 1 → 0으로 만들고 pc를 loop_start_pc로','#e74c3c',13,'left');
+    drawText(50,370,'③ Output Buffer Enable = 1 → 후처리','#2196F3',13,'left');
+    drawText(50,410,'Input SM load 시 SemaPhore Entry 세팅',COL.SEM,12,'left');
+    drawText(50,430,'read_reference_counter는 컴파일타임 결정',COL.SEM,12,'left');
+    ctx.globalAlpha=1;
+}
+
+function S4(t){
+    // Layer Start + 제안1
+    if(t<5){
+        // 제안1: Semaphore Entry 구조
+        drawText(500,30,'SM Semaphore Entry 구조 (제안1)',COL.SEM,18);
+        // 기존 (취소선)
+        let oldF=[['write_ptr (32b)',130],['read_ptr (32b)',130],['write_valid_size (16b)',140],['read_valid_size (16b)',140]];
+        let ox=100;
+        drawText(ox-30,70,'기존 (96bit):',COL.GR,12,'left');
+        oldF.forEach((f)=>{
+            roundRect(ox,80,f[1],35,4,null,COL.GR,1);
+            drawText(ox+f[1]/2,97,f[0],COL.GR,10);
+            ctx.strokeStyle='#e74c3c';ctx.lineWidth=1.5;ctx.beginPath();
+            ctx.moveTo(ox,80);ctx.lineTo(ox+f[1],115);ctx.stroke();
+            ox+=f[1]+5;
+        });
+        drawText(ox+10,97,'→ 불필요',COL.GR,11,'left');
+        // 새 구조
+        drawText(70,145,'변경:',COL.SEM,12,'left');
+        let newF=[['data_position\n(32bit)',COL.SM,200],['write_ref_cnt\n(4bit)','#2ecc71',150],
+                  ['read_ref_cnt\n(4bit)','#e74c3c',150],['semaphore_id\n(8bit)',COL.SEM,150]];
+        let nx=100;
+        newF.forEach((f)=>{
+            let [r,g,b]=hexToRgb(f[1]);
+            roundRect(nx,155,f[2],50,4,`rgba(${r},${g},${b},0.15)`,f[1],2);
+            drawText(nx+f[2]/2,180,f[0],f[1],11);
+            nx+=f[2]+5;
+        });
+        // 설명
+        let st2=Math.min(1,Math.max(0,t-1));ctx.globalAlpha=st2;
+        drawText(100,230,'write_ref_cnt → fan-in 해결 (여러 코어가 하나의 데이터 제작)','#2ecc71',13,'left');
+        drawText(100,255,'read_ref_cnt → fan-out 해결 (하나의 데이터를 여러 코어 참조)','#e74c3c',13,'left');
+        drawText(100,280,'semaphore_id → 동기화 착각 방지 (id 일치 필수)',COL.SEM,13,'left');
+        ctx.globalAlpha=1;
+        let st3=Math.min(1,Math.max(0,t-2));ctx.globalAlpha=st3;
+        drawText(100,320,'write_ref_cnt: 쓸 때마다 1 증가, 설정값 도달 시 0으로 리셋','#2ecc71',12,'left');
+        drawText(100,345,'read_ref_cnt: 쓰기 완료 시 ISA값으로 세팅, 읽을 때마다 1 감소','#e74c3c',12,'left');
+        drawText(100,370,'읽기 조건: write_ref_cnt = 0 AND semaphore id 일치',COL.SEM,12,'left');
+        ctx.globalAlpha=1;
+        drawText(100,420,'레이턴시 우려 시 레지스터로 구현 가능 (개수 논의 필요)',COL.GR,12,'left');
+        drawText(100,445,'+ 드라이버가 값을 변경할 수 있어야 함 (초기설정)',COL.GR,12,'left');
+    } else {
+        // Layer Start 동작
+        let lt=t-5;
+        drawText(500,30,'Layer Start - 데이터 가져오기',COL.COMP,16);
+        drawBox(50,80,180,100,'SM\n(meta + tensor)',COL.SM,14);
+        drawBox(50,220,180,50,'SemaPhore\nEntry',COL.SEM,12);
+        drawBox(400,100,180,80,'Core\n(Layer Start)',COL.COMP,14);
+        drawBox(700,100,150,80,'UB',COL.UB,18);
+        // Check semaphore
+        let s1=Math.min(1,lt*2);ctx.globalAlpha=s1;
+        drawArrow(400,160,230,245,COL.SEM,2);
+        drawText(300,310,'① SemaPhore Entry 확인',COL.SEM,13);
+        ctx.globalAlpha=1;
+        let s2=Math.min(1,Math.max(0,lt*2-1));ctx.globalAlpha=s2;
+        drawText(300,340,'② write_ref_cnt = 0 → 읽기 허용','#2ecc71',13);
+        drawArrow(230,130,400,130,COL.SM,3);
+        animDots(230,130,400,130,COL.SM,3,t);
+        ctx.globalAlpha=1;
+        let s3=Math.min(1,Math.max(0,lt*2-2));ctx.globalAlpha=s3;
+        drawText(300,370,'③ 읽기 완료 → read_ref_cnt 1 감소','#e74c3c',13);
+        drawArrow(580,140,700,140,COL.UB,3);
+        drawText(640,120,'handshake',COL.UB,11);
+        animDots(580,140,700,140,COL.UB,3,t);
+        drawText(300,400,'④ stream tx/rx로 RAW/WAR hazard 해결',COL.UB,13);
+        ctx.globalAlpha=1;
+    }
+}
+
+function S5(t){
+    // Layer Run + 제안2
+    if(t<5){
+        drawText(500,30,'제안2: SM_WAIT_GE / SM_POST 제거',COL.COMP,18);
+        // Old
+        drawBox(200,60,400,50,'기존: SM_WAIT_GE, SM_POST (1:1 semaphore)',COL.GR,14,0.1);
+        ctx.strokeStyle='#e74c3c';ctx.lineWidth=2;ctx.beginPath();
+        ctx.moveTo(200,60);ctx.lineTo(600,110);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(600,60);ctx.lineTo(200,110);ctx.stroke();
+        // New
+        drawBox(200,130,400,50,'변경: reference_counter 기반 (1:N 지원)','#2ecc71',14,0.15);
+        // Rules
+        let rules=[
+            '1. 읽기: semaphore Entry 없으면 오류',
+            '2. 쓰기: 반드시 semaphore Entry 설정',
+            '3. 읽기: write_ref_cnt = 0일 때만 가능',
+            '4. 읽기 완료: read_ref_cnt 1 감소',
+            '5. 쓰기 완료: write_ref_cnt 1 증가 (설정값 도달 시 0)',
+            '6. 쓰기 완료: read_ref_cnt를 ISA 값으로 세팅',
+            '7. 읽기: semaphore id 일치 필수',
+            '8. 쓰기 완료: semaphore id 세팅',
+            '9. 주소할당: 컴파일타임 정적할당 고정',
+        ];
+        rules.forEach((r,i)=>{
+            let fade=Math.min(1,Math.max(0,t*2-i*0.3));
+            ctx.globalAlpha=fade;
+            drawText(120,210+i*28,r,COL.WH,13,'left');
+            ctx.globalAlpha=1;
+        });
+        drawText(120,480,'sync slot의 reserved 8bit → semaphore id',COL.SEM,13,'left');
+        drawText(120,505,'SM sync op는 제거, Event 정의 미확정 → reserved 추천',COL.GR,12,'left');
+    } else {
+        // Layer Run
+        let lt=t-5;
+        drawText(500,30,'Layer Run - 연산 수행',COL.COMP,16);
+        drawBox(50,150,180,100,'SM\n(meta + tensor)',COL.SM,14);
+        drawBox(370,150,200,120,'Core\n(Layer Run)',COL.COMP,16);
+        drawBox(720,150,150,120,'UB',COL.UB,20);
+        drawArrow(570,200,720,200,COL.UB,3);drawArrow(720,230,570,230,COL.DMA,3);
+        drawText(645,185,'READ',COL.UB,11);drawText(645,245,'WRITE',COL.DMA,11);
+        // Glow
+        let gl=pulse(lt,0.8)*0.3;
+        let [r,g,b]=hexToRgb(COL.COMP);
+        roundRect(370,150,200,120,6,`rgba(${r},${g},${b},${gl})`,null);
+        animDots(720,200,570,200,COL.UB,3,t);
+        animDots(570,230,720,230,COL.DMA,3,t);
+        drawText(470,350,'UB 밖으로 데이터 이동 최소화',COL.GR,14);
+        drawText(470,380,'자세한 동작은 하드웨어 설계에 따름',COL.GR,13);
+    }
+}
+
+function S6(t){
+    // Layer End + Double Buffering
+    drawBox(50,80,180,80,'Core\n(Layer End)',COL.COMP,14);
+    drawBox(50,250,180,80,'SM\n(Output)',COL.SM,14);
+    // UB-A / UB-B
+    drawBox(400,60,200,100,'UB-A\n(현재 결과)',COL.UBA,14);
+    drawBox(400,200,200,100,'UB-B\n(다음 layer)',COL.UBB,14);
+    // Broadcasting
+    let b1=Math.min(1,t*1.5);ctx.globalAlpha=b1;
+    drawArrow(140,160,140,250,COL.DMA,3);
+    drawText(80,210,'결과 전송',COL.DMA,12);
+    animDots(140,160,140,250,COL.DMA,4,t);
+    drawText(700,90,'① 먼저 끝난 코어부터\n결과 broadcasting',COL.DMA,13,'left');
+    ctx.globalAlpha=1;
+    // Double buffering
+    let b2=Math.min(1,Math.max(0,t*1.5-1.5));ctx.globalAlpha=b2;
+    drawText(620,120,'쓰기 완료 (lock)','#e74c3c',12,'left');
+    drawText(620,260,'다음 layer 작업 가능',COL.UBB,12,'left');
+    // Swap arrow
+    ctx.strokeStyle=COL.DMA;ctx.lineWidth=2;ctx.setLineDash([5,3]);
+    ctx.beginPath();ctx.moveTo(600,160);ctx.quadraticCurveTo(650,190,600,200);ctx.stroke();
+    ctx.setLineDash([]);
+    drawText(660,185,'번갈아 사용',COL.DMA,11,'left');
+    ctx.globalAlpha=1;
+    drawText(500,380,'② Double Buffering: 영역을 반으로 나누어 번갈아 사용',COL.UB,14);
+    drawText(500,410,'쓰기 완료 대기 없이 다음 레이어 작업 진행 가능',COL.GR,13);
+}
+
+function S7(t){
+    // loop_jump or stop
+    // Queue
+    let qx=50,qy=60;
+    let items=['stop (loop_start_pc)','layer_start','layer_run','layer_run','layer_end',
+               'layer_start','layer_run','layer_run','layer_end','...','epoch_commit','loop_jump'];
+    items.forEach((item,i)=>{
+        let col=(i===0)?'#e74c3c':(i===items.length-1)?COL.DMA:COL.Q;
+        roundRect(qx,qy+i*28,170,26,3,i===0?'rgba(231,76,60,0.15)':i===items.length-1?'rgba(241,196,15,0.15)':'rgba(0,128,128,0.08)',col,1);
+        drawText(qx+85,qy+i*28+13,item,col,11);
+    });
+    // PC arrow
+    let pcIdx=Math.min(items.length-1,Math.floor(t*1.2));
+    drawText(qx-15,qy+pcIdx*28+13,'→','#e74c3c',14);
+    // Loop arrow
+    ctx.strokeStyle=COL.DMA;ctx.lineWidth=2;ctx.beginPath();
+    ctx.moveTo(qx+170,qy+(items.length-1)*28+13);
+    ctx.quadraticCurveTo(qx+210,qy+items.length*14,qx+170,qy+13);
+    ctx.stroke();
+    drawText(qx+230,qy+items.length*14,'loop_jump\n→ loop_start_pc',COL.DMA,11,'left');
+    // Registers
+    let regs=[['Queue Complete Counter: 0→N',COL.REG],['Loop Counter: 0→++',COL.REG],
+              ['Output Buffer Enable: 0→1',COL.RT]];
+    regs.forEach((r,i)=>{drawBox(400,60+i*55,350,45,r[0],r[1],13,0.1);});
+    // Steps
+    let steps=[
+        ['① loop_end_pc 도착 → Queue Complete Counter + 1',COL.REG],
+        ['② layer_count 비교:',COL.WH],
+        ['   같거나 크면 → pc를 stop으로','#e74c3c'],
+        ['   작으면 → pc를 loop_start_pc로',COL.UB],
+        ['③ Queue Complete Counter = 코어 수 →',COL.REG],
+        ['   0 초기화, Loop Counter + 1',COL.REG],
+        ['   Output Buffer Enable = 1',COL.RT],
+        ['④ 다른 코어 이전 추론 중이어도 먼저 다음 추론 시작',COL.DMA],
+    ];
+    steps.forEach((s,i)=>{
+        let fade=Math.min(1,Math.max(0,t*1.5-i*0.3));
+        ctx.globalAlpha=fade;
+        drawText(410,280+i*25,s[0],s[1],12,'left');
+        ctx.globalAlpha=1;
+    });
+}
+
+function S8(t){
+    // epoch_commit
+    drawText(500,35,'epoch_commit - 코어 간 동기화',COL.Q,16);
+    // Problem (left)
+    drawText(250,65,'문제: 추론이 겹침','#e74c3c',15);
+    let coreColors=['#3498db','#2ecc71'];
+    for(let i=0;i<2;i++){
+        roundRect(80,90+i*50,300,35,4,'rgba(127,140,141,0.15)',COL.GR,1);
+        drawText(60,107+i*50,`C${i}`,'#fff',11);
+        let w=lerp(0,300,Math.min(1,t*0.8));
+        roundRect(80,92+i*50,w*(i===0?1:0.7),31,3,coreColors[i]+'60',coreColors[i],0);
+    }
+    // Overlap
+    if(t>1){
+        ctx.globalAlpha=0.3;roundRect(280,90,80,85,4,'rgba(231,76,60,0.3)','#e74c3c',2);ctx.globalAlpha=1;
+        drawText(320,185,'겹침!','#e74c3c',12);
+    }
+    // Solution (right)
+    drawText(700,65,'해결: epoch_commit','#2ecc71',15);
+    for(let i=0;i<2;i++){
+        roundRect(530,90+i*50,300,35,4,'rgba(127,140,141,0.15)',COL.GR,1);
+        drawText(510,107+i*50,`C${i}`,'#fff',11);
+        let w=lerp(0,200,Math.min(1,t*0.8));
+        roundRect(530,92+i*50,w*(i===0?1:0.7),31,3,coreColors[i]+'60',coreColors[i],0);
+    }
+    // Barrier
+    if(t>1.5){
+        ctx.strokeStyle='#2ecc71';ctx.lineWidth=2;ctx.setLineDash([6,4]);
+        ctx.beginPath();ctx.moveTo(730,85);ctx.lineTo(730,180);ctx.stroke();ctx.setLineDash([]);
+        drawText(750,90,'epoch','#2ecc71',10,'left');
+        if(t>2.5)drawText(745,140,'idle!',COL.DMA,11,'left');
+    }
+    // Explanation
+    let et=Math.min(1,Math.max(0,t-2));ctx.globalAlpha=et;
+    let exps=[
+        ['• queue complete cnt = core 수 → 동기화 지점',COL.WH],
+        ['• epoch_interval: 컴파일 옵션 (default = 1)',COL.WH],
+        ['• 빠른 코어는 epoch_commit에서 대기',COL.DMA],
+        ['• 모든 코어 도달 → 동시 진행','#2ecc71'],
+    ];
+    exps.forEach((e,i)=>drawText(100,260+i*30,e[0],e[1],14,'left'));
+    ctx.globalAlpha=1;
+    // Diagram
+    if(t>3){
+        let dt=t-3;
+        drawText(500,400,'타임라인:',COL.GR,13);
+        for(let i=0;i<2;i++){
+            roundRect(100,420+i*40,700,30,3,'rgba(127,140,141,0.1)',COL.GR,1);
+            drawText(70,435+i*40,`C${i}`,'#fff',11);
+        }
+        // Epochs
+        for(let e=0;e<3;e++){
+            let ex=300+e*200;
+            ctx.strokeStyle='#2ecc71';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);
+            ctx.beginPath();ctx.moveTo(ex,415);ctx.lineTo(ex,495);ctx.stroke();ctx.setLineDash([]);
+            drawText(ex,510,'epoch','#2ecc71',9);
+        }
+    }
+}
+
+function S9(t){
+    // Data Hazards
+    let hazards=[
+        ['WAR','다 쓰지 않았는데, 데이터를 읽는다','write','read !','#e74c3c'],
+        ['RAW','다 읽지 않았는데, 데이터를 쓴다','read','write !',COL.CORE],
+        ['WAW','다 쓰지 않았는데, 데이터를 쓴다','write','write !',COL.DMA],
+    ];
+    hazards.forEach((h,i)=>{
+        let y=80+i*140;
+        let fade=Math.min(1,Math.max(0,t*1.5-i*0.8));ctx.globalAlpha=fade;
+        drawText(80,y+30,h[0],h[4],28,'center');
+        drawBox(160,y,120,50,h[2],COL.WH,14);
+        drawArrow(280,y+25,370,y+25,h[4],3);
+        drawBox(370,y,120,50,h[3],h[4],14);
+        drawText(520,y+15,h[1],COL.GR,13,'left');
+        ctx.globalAlpha=1;
+    });
+    let st=Math.min(1,Math.max(0,t-3));ctx.globalAlpha=st;
+    drawBox(200,500,500,45,'→ stream slot, sync slot으로 해결','#2ecc71',15,0.15);
+    ctx.globalAlpha=1;
+}
+
+function S10(t){
+    // Fan-out
+    drawText(500,30,'Fan-out 문제: 같은 값을 여러 코어가 참조',COL.COMP,16);
+    drawBox(50,150,200,120,'Shared\nMemory',COL.SM,16);
+    let cores=[['core 1',120],['core 2',220],['core 3',320],['core 4',420]];
+    cores.forEach(c=>{drawBox(400,c[1]-20,120,40,c[0],COL.COMP,13);});
+    // Step 1: core1 read
+    let s1=Math.min(1,t*2);ctx.globalAlpha=s1;
+    drawArrow(250,180,400,120,COL.UB,2);drawText(340,140,'read',COL.UB,11);
+    ctx.globalAlpha=1;
+    // Step 2: SM_WAIT_GE
+    let s2=Math.min(1,Math.max(0,t*2-1));ctx.globalAlpha=s2;
+    drawText(550,120,'SM_WAIT_GE:\n다 읽었다고 표시!','#e74c3c',12,'left');
+    ctx.globalAlpha=1;
+    // Step 3: write
+    let s3=Math.min(1,Math.max(0,t*2-2));ctx.globalAlpha=s3;
+    drawArrow(400,310,250,230,'#e74c3c',3);
+    drawText(310,280,'write\n(새 데이터 덮어씀!)','#e74c3c',11);
+    ctx.globalAlpha=1;
+    // Step 4: wrong read
+    let s4=Math.min(1,Math.max(0,t*2-3));ctx.globalAlpha=s4;
+    drawArrow(250,200,400,200,COL.COMP,2);
+    drawText(550,210,'전혀 다른 데이터를\n읽게 됨!','#e74c3c',13,'left');
+    ctx.globalAlpha=1;
+    // Solution
+    let s5=Math.min(1,Math.max(0,t-3));ctx.globalAlpha=s5;
+    drawBox(200,480,500,45,'해결: semaphore entry에 read_reference_count 추가','#2ecc71',14,0.15);
+    ctx.globalAlpha=1;
+}
+
+function S11(t){
+    // Fan-in
+    drawText(500,30,'Fan-in 문제: 여러 코어가 하나의 데이터 작성 (예: concat)',COL.COMP,16);
+    drawBox(600,150,200,120,'Shared\nMemory',COL.SM,16);
+    let cores=[['core 1',120],['core 2',220],['core 3',320],['core 4',420]];
+    cores.forEach(c=>{drawBox(300,c[1]-20,120,40,c[0],COL.COMP,13);});
+    // Step 1: core1 write
+    let s1=Math.min(1,t*2);ctx.globalAlpha=s1;
+    drawArrow(420,120,600,180,COL.DMA,2);drawText(520,140,'write',COL.DMA,11);
+    ctx.globalAlpha=1;
+    // Step 2: SM_POST
+    let s2=Math.min(1,Math.max(0,t*2-1));ctx.globalAlpha=s2;
+    drawText(50,120,'SM_POST:\n읽을 준비 됐다고 표시!','#e74c3c',12,'left');
+    ctx.globalAlpha=1;
+    // Step 3: premature read
+    let s3=Math.min(1,Math.max(0,t*2-2));ctx.globalAlpha=s3;
+    drawArrow(600,230,420,410,'#e74c3c',3);
+    drawText(550,340,'데이터가 다 써진 줄 알고\n읽어가게 됨!','#e74c3c',13,'left');
+    ctx.globalAlpha=1;
+    // Solution
+    let s4=Math.min(1,Math.max(0,t-3));ctx.globalAlpha=s4;
+    drawBox(200,480,500,45,'해결: semaphore entry에 write_reference_count 추가','#2ecc71',14,0.15);
+    ctx.globalAlpha=1;
+}
+
+function S12(t){
+    // Sync confusion
+    drawText(500,30,'동기화 착각 + semaphore id',COL.SEM,16);
+    // Timeline - 3 data streams
+    let data=['A','B','C'];
+    let colors=[COL.SM,'#2ecc71','#e67e22'];
+    let yBase=80;
+    data.forEach((d,i)=>{
+        let y=yBase+i*100;
+        // Write
+        drawBox(50,y,100,35,`${d} 쓰기`,COL.DMA,12);
+        drawArrow(150,y+17,200,y+17,COL.GR,1);
+        // Sync
+        drawBox(200,y,80,35,'동기화',colors[i],10);
+        drawArrow(280,y+17,330,y+17,COL.GR,1);
+        // Read
+        drawBox(330,y,100,35,`${d} 읽기`,COL.UB,12);
+        drawArrow(430,y+17,480,y+17,COL.GR,1);
+        // Free
+        drawBox(480,y,80,35,'비움',COL.GR,10);
+        // ref cnt
+        drawText(590,y+17,`read_ref_cnt=3`,COL.SEM,10,'left');
+    });
+    // Problem arrow
+    let pt=Math.min(1,Math.max(0,t-2));ctx.globalAlpha=pt;
+    ctx.strokeStyle='#e74c3c';ctx.lineWidth=3;ctx.beginPath();
+    ctx.moveTo(480,280+17);ctx.quadraticCurveTo(520,200,330,180+17);ctx.stroke();
+    // Arrowhead
+    let angle=Math.atan2(-1,1);
+    ctx.fillStyle='#e74c3c';ctx.beginPath();
+    ctx.moveTo(330,180+17);ctx.lineTo(340,180+10);ctx.lineTo(340,180+24);ctx.closePath();ctx.fill();
+    drawText(540,230,'예상치 못한 지연으로\nB가 아닌 A를 읽음!','#e74c3c',14,'left');
+    ctx.globalAlpha=1;
+    // Cause
+    let ct=Math.min(1,Math.max(0,t-3));ctx.globalAlpha=ct;
+    drawText(300,410,'semaphore는 "누가" 쓴 값이고 "누가" 소비하는지 표시가 없음',COL.DMA,13);
+    ctx.globalAlpha=1;
+    // Solution
+    let st=Math.min(1,Math.max(0,t-4));ctx.globalAlpha=st;
+    drawBox(150,450,600,50,'해결: semaphore id 추가 → id 일치 시에만 읽기 가능','#2ecc71',14,0.15);
+    drawText(450,520,'id는 255를 넘으면 오버플로우하여 사용',COL.GR,12);
+    ctx.globalAlpha=1;
+}
+
+const scenes=[S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12];
+
+function render(ts){
+    if(!lastFT)lastFT=ts;
+    aT+=(ts-lastFT)/1000*speed;lastFT=ts;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#9b59b6';ctx.font='bold 16px sans-serif';ctx.textAlign='center';
+    ctx.fillText(`[${step+1}/12] ${titles[step]}`,W/2,560);
+    scenes[step](aT);
+    requestAnimationFrame(render);
+}
+
+function updateUI(){
+    document.getElementById('step-indicator').textContent=`${step+1}/${totalSteps}: ${titles[step]}`;
+    document.getElementById('description').textContent=descs[step];
+    aT=0;lastFT=0;
+}
+function nextStep(){if(step<totalSteps-1){step++;updateUI();}}
+function prevStep(){if(step>0){step--;updateUI();}}
+function toggleAuto(){
+    autoPlay=!autoPlay;
+    document.getElementById('btn-auto').classList.toggle('active',autoPlay);
+    document.getElementById('btn-auto').textContent=autoPlay?'⏸ 정지':'▶▶ 자동재생';
+    if(autoPlay){autoTimer=setInterval(()=>{if(step<totalSteps-1)nextStep();else{step=0;updateUI();}},8000/speed);}
+    else clearInterval(autoTimer);
+}
+document.getElementById('speed-slider').addEventListener('input',e=>{
+    speed=parseFloat(e.target.value);
+    document.getElementById('speed-val').textContent=speed.toFixed(1)+'x';
+    if(autoPlay){clearInterval(autoTimer);autoTimer=setInterval(()=>{if(step<totalSteps-1)nextStep();else{step=0;updateUI();}},8000/speed);}
+});
+document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' ')nextStep();
+    if(e.key==='ArrowLeft')prevStep();
+});
+updateUI();requestAnimationFrame(render);
+</script>
+</body>
+</html>

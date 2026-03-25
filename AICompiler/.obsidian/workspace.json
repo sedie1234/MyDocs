@@ -1,0 +1,247 @@
+{
+  "main": {
+    "id": "48f190edfc2a7441",
+    "type": "split",
+    "children": [
+      {
+        "id": "b7c5d77fc60768d7",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "bd144a3f21c070be",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "OpFusionPass.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "OpFusionPass"
+            }
+          },
+          {
+            "id": "1577d4356e43019b",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "개발 파이프라인 정리.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "개발 파이프라인 정리"
+            }
+          },
+          {
+            "id": "8397009008982d1e",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "workload.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "workload"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "9fd0bade5074b6b5",
+    "type": "split",
+    "children": [
+      {
+        "id": "ab76e0ef56a246c3",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "ea77b6e35bb46e1d",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": true
+              },
+              "icon": "lucide-folder-closed",
+              "title": "파일 탐색기"
+            }
+          },
+          {
+            "id": "c62d471509208f48",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "검색"
+            }
+          },
+          {
+            "id": "9feb68d96417bcac",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "북마크"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "fad43affd28f54aa",
+    "type": "split",
+    "children": [
+      {
+        "id": "02b3a20251841a7e",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "eca14b260cd6c19b",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "OpFusionPass.md",
+                "collapseAll": true,
+                "extraContext": true,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "OpFusionPass 의 백링크"
+            }
+          },
+          {
+            "id": "0ebdc119d0202501",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "OpFusionPass.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "OpFusionPass 의 나가는 링크"
+            }
+          },
+          {
+            "id": "89dadadd3a7e4a54",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "태그"
+            }
+          },
+          {
+            "id": "eb3062e5da264b37",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "모든 속성"
+            }
+          },
+          {
+            "id": "a388b539b7149b67",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "OpFusionPass.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "OpFusionPass 의 개요"
+            }
+          }
+        ],
+        "currentTab": 4
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:빠른 전환기 열기": false,
+      "graph:그래프 뷰 열기": false,
+      "canvas:새 캔버스 만들기": false,
+      "daily-notes:오늘의 일일 노트 열기": false,
+      "templates:템플릿 삽입": false,
+      "command-palette:명령어 팔레트 열기": false,
+      "bases:새 베이스 생성하기": false
+    }
+  },
+  "active": "bd144a3f21c070be",
+  "lastOpenFiles": [
+    "MonoOpFusionPass.md",
+    "OpFusionPass.md",
+    "개발 파이프라인 정리.md",
+    "무제.canvas",
+    "Custom IR 설계.md",
+    "QDQFusionPass.md",
+    "workload.md",
+    "임시 기록 - Custom IR 설계를 위한 정보들 기입.md",
+    "INF_CAP Layer.md",
+    "ExitIREEPass.md",
+    "컴파일러 개발일지.md",
+    "HAL Ops에서 vtable 함수포인터 호출 흐름.md",
+    "컴파일러 적용과 mlir의 변화.md",
+    "IREE 코드 구성.md",
+    "Pasted image 20260107171949.png",
+    "iree-air-aie-architecture.md",
+    "iree-air-aie-architecture 2.png",
+    "AI-Compiler-code_outline.png",
+    "컴파일러 코드 분석.md",
+    "full_pipeline.mlir",
+    "그림1 1.png",
+    "Pasted image 20260107172128.png",
+    "Pasted image 20260107172204.png",
+    "Pasted image 20260107172447.png",
+    "Pasted image 20260107172701.png",
+    "Pasted image 20260107172703.png",
+    "Pasted image 20260107172707.png",
+    "VailPadPass.md",
+    "PostOpFusionPass.md",
+    "QOpFusionPass.md"
+  ]
+}
