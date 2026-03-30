@@ -90,7 +90,7 @@ IREE_Plugin_Registration/
 # plugin이 작동하는 방식 및 작업흐름
 - iree는 hal.executable을 만들어주고 그 아래에 region을 만들어준다. plugin은 그 region의 handle을 가져올 수 있는 것. buildTranslatePassPipeline이라는 함수를 상속받아 사용한다.
 - plugin이 적용되는 위치 (그림 상)
-<img src="Apply_Plugin.png" width="500">
+<img src="images/Apply_Plugin.png" width="500">
 
 - plulgin이 적용되는 위치 (코드 상) : hal.executable.variant가 처음 등장한 직후 builtin.module에 적용
 ```

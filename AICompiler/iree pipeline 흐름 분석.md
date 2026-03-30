@@ -1063,8 +1063,8 @@ module attributes {vm.toplevel} {
 - 호출한 디바이스 드라이버에 @hal.command_buffer에 기록한 값들을 입력시켜 동작시킴
 
 - vm code 및 rodata 세팅
-![Pasted image 20260113115644](Pasted%20image%2020260113115644.png)
+![Pasted image 20260113115644](images/Pasted%20image%2020260113115644.png)
 - vm function, function을 어떤 순서에 따라서 그리고 어떤 값을 넣을 지 계획획
-![Pasted image 20260113115726](Pasted%20image%2020260113115726.png)
+![Pasted image 20260113115726](images/Pasted%20image%2020260113115726.png)
 - 결과를 export
-![Pasted image 20260113115919](Pasted%20image%2020260113115919.png)
+![Pasted image 20260113115919](images/Pasted%20image%2020260113115919.png)

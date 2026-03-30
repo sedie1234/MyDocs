@@ -100,3 +100,14 @@ $IND_OPT --composite-and-qfusion \
 | FakeQDQToQuantPass.cpp | `pubH/independent/lib/Transforms/` |
 | CompositeAndQFusionPass.cpp | `pubH/independent/lib/Transforms/` |
 | 지시서 | `docs/agent_command/independent_pipeline1.md` |
+
+---
+
+## 관련 문서
+
+- [[QDQ Direct 파이프라인]] — QDQ ONNX 직접 변환 (현재 최신)
+- [[Quantized StableHLO 파이프라인]] — 이전 fake QDQ 방식
+- [[input_locations 기반 InlineConstantsPass]] — bias 매칭 해결
+- [[i8 허용 Op 목록]] — compute/transparent op 분류
+- [[Step5 QuantizeRegion 변환 규칙]] — i8 변환 알고리즘
+- [[Step5 fp32 잔여 분석]] — 변환 불가 영역 분석
