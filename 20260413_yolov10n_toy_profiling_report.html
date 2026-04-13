@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>YOLOv10n Toy Profiling Report — Infetron-V2</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+    --bar: #1f6feb;
+    --bar2: #388bfd;
+    --bar-dma: #d29922;
+    --bar-compute: #3fb950;
+    --grid: #21262d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "SF Pro Text", system-ui, "Noto Sans KR", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 24px 32px 80px;
+    line-height: 1.55;
+  }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 36px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: var(--accent); }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .grid { display: grid; gap: 14px; }
+  .cols-4 { grid-template-columns: repeat(4, 1fr); }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .cols-2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 900px) {
+    .cols-4, .cols-3 { grid-template-columns: repeat(2, 1fr); }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .tile-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .tile-value { font-size: 22px; font-weight: 600; margin-top: 4px; color: var(--text); }
+  .tile-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .ok { color: var(--ok); }
+  .warn { color: var(--warn); }
+  .err { color: var(--err); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--grid); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: "SF Mono", Consolas, monospace; }
+  .bar-chart { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
+  .bar-row { display: grid; grid-template-columns: 40px 1fr 120px; align-items: center; gap: 6px; }
+  .bar-name { color: var(--muted); font-family: "SF Mono", Consolas, monospace; text-align: right; }
+  .bar-track { background: var(--grid); border-radius: 2px; height: 12px; overflow: hidden; position: relative; display: flex; }
+  .bar-compute { background: var(--bar-compute); height: 100%; }
+  .bar-dma { background: var(--bar-dma); height: 100%; }
+  .bar-value { font-family: "SF Mono", Consolas, monospace; color: var(--muted); font-size: 10px; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .legend-box { display: inline-block; width: 12px; height: 12px; margin-right: 4px; vertical-align: middle; border-radius: 2px; }
+  .verdict {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .v-toy { background: rgba(210, 153, 34, 0.15); color: var(--warn); border: 1px solid var(--warn); }
+  code { background: var(--grid); padding: 1px 6px; border-radius: 3px; font-size: 12px; color: var(--accent); }
+  ul { margin: 6px 0; padding-left: 22px; }
+  ul li { font-size: 13px; color: var(--text); }
+  .notice {
+    background: rgba(210, 153, 34, 0.08);
+    border-left: 3px solid var(--warn);
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-bottom: 24px;
+    font-size: 13px;
+  }
+  .sm-block {
+    padding: 8px 12px;
+    border-radius: 3px;
+    color: #0e1116;
+    margin-bottom: 2px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 11px;
+  }
+  .sm-weights { background: #f0883e; }
+  .sm-input { background: #58a6ff; color: #0e1116; }
+  .sm-output { background: #3fb950; color: #0e1116; }
+  .sm-ping { background: #a371f7; color: #e6edf3; }
+  .sm-pong { background: #7c3aed; color: #e6edf3; }
+  .sm-free { background: var(--grid); color: var(--muted); border: 1px dashed var(--border); }
+</style>
+</head>
+<body>
+
+<h1>YOLOv10n — Toy Profiling Report</h1>
+<div class="meta">
+  Target: Infetron-V2 NPU · Simulator: <code>test_yolov10n_sim</code> (toy baseline) ·
+  Binary: <code>test/data/yolov10n.ihnn</code> (2026-04-10 생성, 합성) ·
+  작성일: 2026-04-13
+</div>
+
+<div class="notice">
+  <strong>⚠ 이 보고서는 "toy" 버전 시뮬레이션 기준입니다.</strong><br>
+  이 시뮬레이션은 실제 ONNX 그래프가 아닌, 작업 초반에 수작업으로 만든 <strong>합성 .ihnn 파일</strong>
+  (83개 Conv, 각각 1 tile, single pcore) 을 돌린 것입니다. 실제 yolov10n 의 Concat/Split/Add/Resize/
+  MaxPool/Sigmoid/Gemm 등은 포함돼 있지 않습니다.<br>
+  ONNX 실제 그래프 기반 결과는 <code>20260413_yolov10n_profiling_report.html</code> 을 보세요.
+</div>
+
+<!-- ============================================================= -->
+<h2>핵심 지표</h2>
+<div class="grid cols-4">
+  <div class="card">
+    <div class="tile-label">Wall Time @ 800 MHz</div>
+    <div class="tile-value warn">43.60 ms</div>
+    <div class="tile-sub">≈ 22.9 FPS (toy)</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Total Cycles</div>
+    <div class="tile-value">34,876,543</div>
+    <div class="tile-sub">Compute 23.7M + DMA 11.2M</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Layers (Conv only)</div>
+    <div class="tile-value">83</div>
+    <div class="tile-sub">각 1 LAYER_RUN · 총 253 records</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Active Pcores</div>
+    <div class="tile-value">1 / 12</div>
+    <div class="tile-sub">단일 Pcore 0, 나머지 idle</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Queue Usage (Pcore 0)</div>
+    <div class="tile-value ok">49.4%</div>
+    <div class="tile-sub">253 records / 512 한도</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Compute-bound Layers</div>
+    <div class="tile-value">81 / 83</div>
+    <div class="tile-sub">97.6% — 거의 전부 연산이 DMA 보다 오래 걸림</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">DMA-bound Layers</div>
+    <div class="tile-value">2 / 83</div>
+    <div class="tile-sub">2.4% — detection head 의 작은 1×1</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Verdict</div>
+    <div class="tile-value"><span class="verdict v-toy">TOY ONLY</span></div>
+    <div class="tile-sub">HW 한도는 모두 적합, 다만 합성 데이터</div>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>Per-Layer Cycle Breakdown (Top 10 by wall cycles)</h2>
+<div class="card">
+  <div class="bar-chart" id="layer-chart"></div>
+  <div class="legend">
+    <span><span class="legend-box" style="background: var(--bar-compute);"></span>Compute</span>
+    <span><span class="legend-box" style="background: var(--bar-dma);"></span>DMA (overlap 아닌 경우 누적)</span>
+  </div>
+  <div class="tile-sub" style="margin-top: 10px;">
+    최상위 레이어는 <strong>model.0</strong>(640×640×3→16) 과 <strong>model.1</strong>(320×320×16→32) — 공간 해상도가 가장 크고 MAC 연산이 가장 많은 초기 downsample Conv 들.
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>Cycle 구성</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Compute vs DMA</h3>
+    <div class="bar-chart">
+      <div class="bar-row">
+        <div class="bar-name">Compute</div>
+        <div class="bar-track">
+          <div class="bar-compute" style="width: 67.9%;"></div>
+        </div>
+        <div class="bar-value">23,673,600 (67.9%)</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-name">DMA</div>
+        <div class="bar-track">
+          <div class="bar-dma" style="width: 32.1%;"></div>
+        </div>
+        <div class="bar-value">11,202,940 (32.1%)</div>
+      </div>
+    </div>
+    <div class="tile-sub" style="margin-top: 10px;">
+      두 값 합은 <strong>34,876,540 cycles</strong> — wall time 과 거의 일치. 즉 시뮬레이터가 DMA 와 compute 를 직렬 실행으로 모델링하며 ping-pong double-buffering 은 아직 반영 안 됨.
+    </div>
+  </div>
+  <div class="card">
+    <h3>Layer 크기 분포 (compute cycles)</h3>
+    <table>
+      <tr><th>범위</th><th class="num">Layer 수</th><th class="num">%</th></tr>
+      <tr><td>≥ 1,000,000</td><td class="num">4</td><td class="num">4.8%</td></tr>
+      <tr><td>500,000 ~ 999,999</td><td class="num">8</td><td class="num">9.6%</td></tr>
+      <tr><td>200,000 ~ 499,999</td><td class="num">25</td><td class="num">30.1%</td></tr>
+      <tr><td>100,000 ~ 199,999</td><td class="num">23</td><td class="num">27.7%</td></tr>
+      <tr><td>50,000 ~ 99,999</td><td class="num">11</td><td class="num">13.3%</td></tr>
+      <tr><td>&lt; 50,000</td><td class="num">12</td><td class="num">14.5%</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>SM Memory Layout (Toy 버전)</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>정적 고정 레이아웃</h3>
+    <div id="sm-layout"></div>
+    <div class="tile-sub" style="margin-top: 10px;">
+      Toy 버전은 <strong>정적 Ping-Pong</strong> 방식. Weight 2.29 MB 뒤에 Input (1.17 MB), Output
+      (32 KB), FM_A, FM_B 순으로 고정 배치. Liveness 기반 재활용 없음.
+    </div>
+  </div>
+  <div class="card">
+    <h3>Breakdown</h3>
+    <table>
+      <tr><th>영역</th><th class="num">바이트</th><th class="num">시작 주소</th></tr>
+      <tr><td>Weight metadata</td><td class="num">2,326,192</td><td class="num">0x000000</td></tr>
+      <tr><td>Input</td><td class="num">1,228,800</td><td class="num">0x22FB60</td></tr>
+      <tr><td>Output</td><td class="num">32,000</td><td class="num">0x363860</td></tr>
+      <tr><td>Ping buffer (FM_A)</td><td class="num">1,638,400</td><td class="num">0x363860</td></tr>
+      <tr><td>Pong buffer (FM_B)</td><td class="num">1,638,400</td><td class="num">0x4F3860</td></tr>
+      <tr><td><strong>합계</strong></td><td class="num"><strong>~6.7 MB</strong></td><td class="num">-</td></tr>
+    </table>
+    <div class="tile-sub" style="margin-top: 10px; color: var(--warn);">
+      Toy 에서도 SM 4MB 한도 초과 — 이 시뮬레이터는 bounds check 를 완화해 돌림.
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>Queue 구성</h2>
+<div class="card">
+  <table>
+    <tr><th>Record 타입</th><th class="num">개수</th><th>설명</th></tr>
+    <tr><td>STOP</td><td class="num">1</td><td>Pcore 진입점</td></tr>
+    <tr><td>LOOP_START</td><td class="num">1</td><td>프로그램 시작 마커</td></tr>
+    <tr><td>LAYER_START (Conv)</td><td class="num">83</td><td>layer 당 1 (weight DMA + params)</td></tr>
+    <tr><td>LAYER_RUN (Conv)</td><td class="num">83</td><td>layer 당 1 (no tiling, 전체 tensor 한 번에)</td></tr>
+    <tr><td>LAYER_END (Conv)</td><td class="num">83</td><td>layer 당 1</td></tr>
+    <tr><td>LOOP_JUMP</td><td class="num">1</td><td>loop 반복</td></tr>
+    <tr><td>LOOP_END</td><td class="num">1</td><td>종료</td></tr>
+    <tr><th>합계</th><th class="num">253</th><th>49.4% of HW limit (512)</th></tr>
+  </table>
+</div>
+
+<!-- ============================================================= -->
+<h2>병목 분석</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>초기 Layer 병목</h3>
+    <ul>
+      <li>Layer 0 (model.0): 1,228,800 compute cycles = 1.54 ms</li>
+      <li>Layer 1 (model.1): 1,638,400 compute cycles = 2.05 ms</li>
+      <li>두 layer 합 = 전체의 <strong>8.25%</strong></li>
+      <li>원인: 640×640 입력에서의 3×3 Conv, 채널 증가</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Single Core 제약</h3>
+    <ul>
+      <li>Pcore 0 만 사용, 나머지 11 pcore + 12 acore idle</li>
+      <li>Pcore 0 max ref_count entries: <strong>167</strong> (모든 write lock 이 pcore 0 에 집중)</li>
+      <li>12-core 이상적 분산 시 이론적 3.6 ms → 실측 43.6 ms</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>DMA Overlap 부재</h3>
+    <ul>
+      <li>Compute + DMA = 34.88M cycles = wall time 과 동일</li>
+      <li>즉 DMA 와 compute 가 <strong>직렬 실행</strong> 되고 있음</li>
+      <li>Double-buffering 활성화 시 추가 20~30% 단축 여지</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Weight DMA Overhead</h3>
+    <ul>
+      <li>각 LAYER_START 에서 weight 를 SM→UB 로 전송</li>
+      <li>Weight size: 112~36,868 cycles 범위</li>
+      <li>대형 weight (147,456 B 기준) 은 36,868 cycles 소요</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>12-Core 분산 시 이론치</h2>
+<div class="card">
+  <table>
+    <tr>
+      <th>시나리오</th>
+      <th class="num">Cycles</th>
+      <th class="num">Wall (ms)</th>
+      <th class="num">FPS</th>
+      <th class="num">개선비</th>
+    </tr>
+    <tr><td>현재 (single core)</td><td class="num">34,876,543</td><td class="num">43.60</td><td class="num">22.9</td><td class="num">1.0×</td></tr>
+    <tr><td>이상적 12-core</td><td class="num">~2,906,379</td><td class="num">~3.63</td><td class="num">~275</td><td class="num">12×</td></tr>
+    <tr><td>현실 12-core (통신/sync 감안)</td><td class="num">~4~6M</td><td class="num">~5~7.5</td><td class="num">~130~200</td><td class="num">6~8×</td></tr>
+  </table>
+  <div class="tile-sub" style="margin-top: 10px;">
+    ONNX 버전 (48.41 ms) 이 toy (43.60 ms) 보다 살짝 느린 이유: ONNX 는 Conv 외에 Concat/Split/Add/Resize/Sigmoid/Gemm 등 추가 연산과 tiling 이 있기 때문. 단, ONNX 는 12-core 로 실제 분산 실행.
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>Toy vs ONNX 비교</h2>
+<div class="card">
+  <table>
+    <tr>
+      <th>항목</th>
+      <th>Toy (이 보고서)</th>
+      <th>ONNX (실제)</th>
+    </tr>
+    <tr><td>입력 파일</td><td><code>yolov10n.ihnn</code> (합성)</td><td><code>yolov10n_onnx.ihnn</code> (ONNX 변환)</td></tr>
+    <tr><td>hw_ops 수</td><td class="num">83 (Conv only)</td><td class="num">154 (Conv 83 + 기타 71)</td></tr>
+    <tr><td>Op 구성</td><td>Conv 전용</td><td>Conv, Concat, Split, Add, MaxPool, Resize, Sigmoid, Gemm, ...</td></tr>
+    <tr><td>Queue records</td><td class="num">253</td><td class="num">max 144 / pcore</td></tr>
+    <tr><td>Tile 분할</td><td>없음 (1 RUN/layer)</td><td>있음 (UB 한도 고려)</td></tr>
+    <tr><td>Chain 활용</td><td>없음</td><td class="num">14 chain, 30 Conv</td></tr>
+    <tr><td>Active pcores</td><td class="num">1</td><td class="num">12</td></tr>
+    <tr><td>SM allocator</td><td>정적 ping-pong</td><td>Interval scheduling + liveness</td></tr>
+    <tr><td>Wall time</td><td class="num">43.60 ms</td><td class="num">48.41 ms</td></tr>
+    <tr><td>주요 의미</td><td>HW 기본 동작 검증용</td><td>실사용 프로파일링 결과</td></tr>
+  </table>
+</div>
+
+<!-- ============================================================= -->
+<h2>산출물 경로</h2>
+<div class="card">
+  <table>
+    <tr><th>구분</th><th>경로</th></tr>
+    <tr><td>Simulator source</td><td><code>hw-profiling/test/integration/test_yolov10n_sim.cpp</code></td></tr>
+    <tr><td>Simulator binary</td><td><code>hw-profiling/build/test/test_yolov10n_sim</code></td></tr>
+    <tr><td>Toy ihnn</td><td><code>hw-profiling/test/data/yolov10n.ihnn</code> (2.27 MB)</td></tr>
+    <tr><td>Toy json</td><td><code>hw-profiling/test/data/yolov10n.json</code></td></tr>
+    <tr><td>Sim event log</td><td><code>hw-profiling/test/data/yolov10n_sim_log.txt</code></td></tr>
+    <tr><td>본 HTML 보고서</td><td><code>docs/MyDocs/20260413_yolov10n_toy_profiling_report.html</code></td></tr>
+    <tr><td>ONNX 버전 (비교)</td><td><code>docs/MyDocs/20260413_yolov10n_profiling_report.html</code></td></tr>
+  </table>
+</div>
+
+<!-- ============================================================= -->
+<script>
+// Top 10 layers by wall cycles (from simulator log)
+const layers = [
+  {name: "L1",  compute: 1638400, dma: 615564},
+  {name: "L0",  compute: 1228800, dma: 716920},
+  {name: "L5",  compute: 1228800, dma: 512396},
+  {name: "L40", compute: 1228800, dma: 412684},
+  {name: "L2",  compute: 819200,  dma: 409868},
+  {name: "L6",  compute: 819200,  dma: 311820},
+  {name: "L12", compute: 819200,  dma: 309260},
+  {name: "L14", compute: 819200,  dma: 256300},
+  {name: "L36", compute: 614400,  dma: 257548},
+  {name: "L37", compute: 614400,  dma: 217100},
+];
+const maxTotal = Math.max(...layers.map(l => l.compute + l.dma));
+const container = document.getElementById('layer-chart');
+layers.forEach(l => {
+  const row = document.createElement('div');
+  row.className = 'bar-row';
+  const name = document.createElement('div');
+  name.className = 'bar-name';
+  name.textContent = l.name;
+  const track = document.createElement('div');
+  track.className = 'bar-track';
+  const totalPct = ((l.compute + l.dma) / maxTotal) * 100;
+  const computePct = (l.compute / (l.compute + l.dma)) * totalPct;
+  const dmaPct = (l.dma / (l.compute + l.dma)) * totalPct;
+  const cb = document.createElement('div');
+  cb.className = 'bar-compute';
+  cb.style.width = computePct + '%';
+  const db = document.createElement('div');
+  db.className = 'bar-dma';
+  db.style.width = dmaPct + '%';
+  track.appendChild(cb);
+  track.appendChild(db);
+  const val = document.createElement('div');
+  val.className = 'bar-value';
+  const totalUs = ((l.compute + l.dma) * 1.25 / 1000).toFixed(1);
+  val.textContent = `${(l.compute + l.dma).toLocaleString()} (${totalUs}μs)`;
+  row.appendChild(name);
+  row.appendChild(track);
+  row.appendChild(val);
+  container.appendChild(row);
+});
+
+// SM layout (toy)
+const smLayout = [
+  {name: 'Weight metadata', bytes: 2326192, cls: 'sm-weights'},
+  {name: 'Input', bytes: 1228800, cls: 'sm-input'},
+  {name: 'Output', bytes: 32000, cls: 'sm-output'},
+  {name: 'Ping buffer (FM_A)', bytes: 1638400, cls: 'sm-ping'},
+  {name: 'Pong buffer (FM_B)', bytes: 1638400, cls: 'sm-pong'},
+];
+const totalSm = smLayout.reduce((a, b) => a + b.bytes, 0);
+const smContainer = document.getElementById('sm-layout');
+smLayout.forEach(s => {
+  const el = document.createElement('div');
+  el.className = 'sm-block ' + s.cls;
+  const mb = (s.bytes / 1024 / 1024).toFixed(2);
+  const pct = (s.bytes / totalSm * 100).toFixed(1);
+  el.style.height = Math.max(20, s.bytes / totalSm * 140) + 'px';
+  el.innerHTML = `<strong>${s.name}</strong> · ${mb} MB (${pct}%)`;
+  smContainer.appendChild(el);
+});
+</script>
+
+</body>
+</html>

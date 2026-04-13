@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>YOLOv10n Profiling Report — Infetron-V2</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+    --bar: #1f6feb;
+    --bar2: #388bfd;
+    --grid: #21262d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "SF Pro Text", system-ui, "Noto Sans KR", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 24px 32px 80px;
+    line-height: 1.55;
+  }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 36px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: var(--accent); }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .grid { display: grid; gap: 14px; }
+  .cols-4 { grid-template-columns: repeat(4, 1fr); }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .cols-2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 900px) {
+    .cols-4, .cols-3 { grid-template-columns: repeat(2, 1fr); }
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .tile-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .tile-value { font-size: 22px; font-weight: 600; margin-top: 4px; color: var(--text); }
+  .tile-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .ok { color: var(--ok); }
+  .warn { color: var(--warn); }
+  .err { color: var(--err); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--grid); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: "SF Mono", Consolas, monospace; }
+  .bar-chart { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+  .bar-row { display: grid; grid-template-columns: 70px 1fr 80px; align-items: center; gap: 8px; }
+  .bar-name { color: var(--muted); font-family: "SF Mono", Consolas, monospace; }
+  .bar-track { background: var(--grid); border-radius: 3px; height: 14px; overflow: hidden; position: relative; }
+  .bar-fill { background: linear-gradient(90deg, var(--bar), var(--bar2)); height: 100%; border-radius: 3px; }
+  .bar-value { font-family: "SF Mono", Consolas, monospace; color: var(--muted); text-align: right; }
+  .chain-pill {
+    display: inline-block;
+    background: var(--grid);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2px 10px;
+    margin: 2px 3px 2px 0;
+    font-size: 11px;
+    font-family: "SF Mono", Consolas, monospace;
+    color: var(--muted);
+  }
+  .chain-3 { background: rgba(31, 111, 235, 0.2); border-color: var(--accent); color: var(--accent); }
+  .sm-layout { display: flex; flex-direction: column; gap: 2px; font-family: "SF Mono", Consolas, monospace; font-size: 11px; }
+  .sm-block { padding: 8px 12px; border-radius: 3px; color: #0e1116; }
+  .sm-weights { background: #f0883e; }
+  .sm-fm { background: #1f6feb; color: #e6edf3; }
+  .sm-over { background: #da3633; color: #e6edf3; }
+  .sm-free { background: var(--grid); color: var(--muted); border: 1px dashed var(--border); }
+  .verdict {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .v-invalid { background: rgba(248, 81, 73, 0.15); color: var(--err); border: 1px solid var(--err); }
+  .v-valid { background: rgba(63, 185, 80, 0.15); color: var(--ok); border: 1px solid var(--ok); }
+  code { background: var(--grid); padding: 1px 6px; border-radius: 3px; font-size: 12px; color: var(--accent); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 1000px) { .two-col { grid-template-columns: 1fr; } }
+  .timeline { position: relative; height: 240px; margin-top: 10px; }
+  ul { margin: 6px 0; padding-left: 22px; }
+  ul li { font-size: 13px; color: var(--text); }
+  .subtle { color: var(--muted); }
+  .label-tiny { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<h1>YOLOv10n — HW Profiling Report</h1>
+<div class="meta">
+  Target: Infetron-V2 NPU · Compiler: <code>onnx_to_ihnn.py</code> ·
+  Simulator: <code>test_yolov10n_onnx_sim</code> ·
+  Op Fusion: <span class="warn">OFF</span> (experiment mode) ·
+  작성일: 2026-04-13
+</div>
+
+<!-- ============================================================= -->
+<h2>핵심 지표</h2>
+<div class="grid cols-4">
+  <div class="card">
+    <div class="tile-label">Wall Time @ 800 MHz</div>
+    <div class="tile-value ok">48.41 ms</div>
+    <div class="tile-sub">≈ 20.7 FPS</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Total Cycles</div>
+    <div class="tile-value">38,728,055</div>
+    <div class="tile-sub">이전 대비 56× 가속</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Queue Overflow</div>
+    <div class="tile-value ok">0</div>
+    <div class="tile-sub">max pcore 28.1% / 100%</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">SM Usage</div>
+    <div class="tile-value err">121.4%</div>
+    <div class="tile-sub">4.86 MB / 4 MB (+0.86 MB)</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Active Pcores</div>
+    <div class="tile-value">12 / 12</div>
+    <div class="tile-sub">Block + chain cascade</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Chain Segments</div>
+    <div class="tile-value">14</div>
+    <div class="tile-sub">30 Convs chained (36%)</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Hardware Ops</div>
+    <div class="tile-value">154</div>
+    <div class="tile-sub">83 Conv, 21 Concat, 12 Split, 11 Add…</div>
+  </div>
+  <div class="card">
+    <div class="tile-label">Overall Verdict</div>
+    <div class="tile-value"><span class="verdict v-invalid">INVALID</span></div>
+    <div class="tile-sub">SM overflow만 남음</div>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>Pcore 사용 프로파일</h2>
+<div class="two-col">
+  <div class="card">
+    <h3>Queue Records per Pcore</h3>
+    <div class="bar-chart" id="queue-chart"></div>
+    <div class="tile-sub" style="margin-top:10px;">Max: Pcore 11 · 144 records · 28.1% of HW limit (512)</div>
+  </div>
+  <div class="card">
+    <h3>Wall-time per Pcore (sim order)</h3>
+    <div class="bar-chart" id="time-chart"></div>
+    <div class="tile-sub" style="margin-top:10px;">Critical path: Pcore 11 · 48.41 ms</div>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>Chain Segments</h2>
+<div class="card">
+  <div>
+    <span class="chain-pill chain-3">seg 0 · L=3</span> model.0 → model.1 → model.2.cv1 <span class="subtle">(stride 2·2·1, 3→16→32→32)</span><br>
+    <span class="chain-pill">seg 1 · L=2</span> model.2.m.0.cv1 → .cv2 <span class="subtle">(C2f bottleneck 3×3)</span><br>
+    <span class="chain-pill chain-3">seg 2 · L=3</span> model.2.cv2 → model.3 → model.4.cv1 <span class="subtle">(stride 1·2·1)</span><br>
+    <span class="chain-pill">seg 3 · L=2</span> model.4.m.0.cv1/cv2<br>
+    <span class="chain-pill">seg 4 · L=2</span> model.4.m.1.cv1/cv2<br>
+    <span class="chain-pill">seg 5 · L=2</span> model.6.m.0.cv1/cv2<br>
+    <span class="chain-pill">seg 6 · L=2</span> model.6.m.1.cv1/cv2<br>
+    <span class="chain-pill">seg 7 · L=2</span> model.8.m.0.cv1/cv2<br>
+    <span class="chain-pill">seg 8 · L=2</span> model.8.cv2 → model.9.cv1<br>
+    <span class="chain-pill">seg 9 · L=2</span> model.9.cv2 → model.10.cv1<br>
+    <span class="chain-pill">seg 10 · L=2</span> model.10.ffn.0/1<br>
+    <span class="chain-pill">seg 11 · L=2</span> model.13.m.0.cv1/cv2<br>
+    <span class="chain-pill">seg 12 · L=2</span> model.16.m.0.cv1/cv2<br>
+    <span class="chain-pill">seg 13 · L=2</span> model.23.one2one_cv3.2<br>
+  </div>
+  <div class="tile-sub" style="margin-top: 12px;">
+    Chain 0 (3개 Conv) 은 <strong>stride 2 cross-core pipeline</strong> — model.0/1 output 이 SM 을 거치지 않고 pcore 1·2 의 UB 로 직접 전송.
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>SM Memory Layout</h2>
+<div class="two-col">
+  <div class="card">
+    <h3>Layout (4 MB, to-scale)</h3>
+    <div class="sm-layout" id="sm-layout"></div>
+  </div>
+  <div class="card">
+    <h3>Breakdown</h3>
+    <table>
+      <tr><th>영역</th><th class="num">바이트</th><th class="num">%</th></tr>
+      <tr><td>Weight metadata (고정)</td><td class="num">2,326,192</td><td class="num">55.5%</td></tr>
+      <tr><td>FM area (interval alloc)</td><td class="num">2,764,800</td><td class="num">65.9%</td></tr>
+      <tr><td><strong>합계</strong></td><td class="num"><strong>5,090,992</strong></td><td class="num err"><strong>121.4%</strong></td></tr>
+      <tr><td>HW SM 한도</td><td class="num">4,194,304</td><td class="num">100%</td></tr>
+      <tr><td class="err">Overflow</td><td class="num err">896,688</td><td class="num err">+21.4%</td></tr>
+    </table>
+    <div class="tile-sub" style="margin-top:10px;">
+      FM peak 2.64 MB 는 interval allocator 가 도달한 near-optimal. 초기 Conv 시점 <code>graph_input + 초기 FM</code> 이 동시 live 인 근본적 구조 때문에 이 이상 줄이려면 tile-streaming 이 필요.
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>Op 구성 (154 hw ops)</h2>
+<div class="card">
+  <table>
+    <tr><th>Type</th><th class="num">Count</th><th>특이사항</th></tr>
+    <tr><td>Conv</td><td class="num">83</td><td>69개 SiLU fused, 30개 chain 내부</td></tr>
+    <tr><td>Concat</td><td class="num">21</td><td>#4 fusion 으로 start/end 통합 (fusion ON 시)</td></tr>
+    <tr><td>Split</td><td class="num">12</td><td>C2f branch 분기</td></tr>
+    <tr><td>Add</td><td class="num">11</td><td>residual skip connection</td></tr>
+    <tr><td>Reshape</td><td class="num">8</td><td>shape-only, fold 가능 (fusion ON)</td></tr>
+    <tr><td>Transpose</td><td class="num">4</td><td>attention 내부</td></tr>
+    <tr><td>MaxPool</td><td class="num">3</td><td>SPPF</td></tr>
+    <tr><td>Unsqueeze / Flatten / Cast</td><td class="num">7</td><td>메타 전용</td></tr>
+    <tr><td>Gemm (MatMul)</td><td class="num">2</td><td>M=400 K=32 N=400 · M=64 K=400 N=400 (attention)</td></tr>
+    <tr><td>Softmax / Resize / Sigmoid / Slice / TopK / Tile / Gather / ReduceMax / Sub / Div / Mod</td><td class="num">13</td><td>detection head + postproc</td></tr>
+  </table>
+</div>
+
+<!-- ============================================================= -->
+<h2>Gemm 인코딩 수정 (이번 버전의 핵심 bug fix)</h2>
+<div class="card">
+  <h3>이전 버전 dump (잘못된 인코딩)</h3>
+  <pre style="color: var(--err); background: var(--grid); padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto;">
+[ 52] LAYER_START  Gemm
+      weight: P0_UB[0x0]→P0_UB[0xfe000000] 4,261,412,864 B   ← garbage (uint32 underflow)
+      bias:   P0_UB[0x3f80]→P0_UB[0x0] 0B
+      M=0 K=0 N=0                                              ← 미설정</pre>
+  <h3>현재 버전 dump (ISA 스펙 준수)</h3>
+  <pre style="color: var(--ok); background: var(--grid); padding: 10px; border-radius: 4px; font-size: 12px; overflow-x: auto;">
+[ 52] LAYER_START  Gemm
+      weight: dummy                                            ← MatMul B 가 dynamic activation
+      bias:   dummy
+      M=400 K=32 N=400                                         ← attention Q·K^T 의 실제 shape</pre>
+  <div class="tile-sub">
+    Gemm LAYER_START 를 elementwise 인코딩 (<code>make_ew_layer_start</code>)으로 잘못 만든 결과,
+    dumper 가 weight/bias DMA 필드를 읽을 때 uninitialized bit 를 4.26 GB 로 해석 → 시뮬레이터가 DMA cycle
+    1.065 B cycles 씩 × 2 Gemm = <strong>2.13 B cycles 의 허구 compute</strong> 가 최종 wall time 을
+    48 ms → 2705 ms 로 부풀렸음. 본 수정으로 전환.
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>개선 타임라인 (이번 세션 전체)</h2>
+<div class="card">
+  <table>
+    <tr>
+      <th>단계</th><th>조치</th><th class="num">Pcore 0 records</th><th class="num">Queue %</th>
+      <th class="num">SM %</th><th class="num">Cycles</th><th>결과</th>
+    </tr>
+    <tr><td>v1</td><td>toy, single core</td><td class="num">253</td><td class="num">49%</td><td class="num">—</td><td class="num">24.2M</td><td>검증</td></tr>
+    <tr><td>v2</td><td>ONNX single core</td><td class="num">893</td><td class="num">174%</td><td class="num">203%</td><td class="num">3.33B</td><td class="err">heap crash</td></tr>
+    <tr><td>+ validator</td><td>진단 리포트</td><td class="num">893</td><td class="num">174%</td><td class="num">203%</td><td class="num">—</td><td>ERRORS 937</td></tr>
+    <tr><td>+ SM pool 통일</td><td>liveness 재활용</td><td class="num">1182</td><td class="num">231%</td><td class="num">153%</td><td class="num">—</td><td>428</td></tr>
+    <tr><td>+ UB chain 1×1</td><td>multi-core</td><td class="num">1242</td><td class="num">243%</td><td class="num">153%</td><td class="num">—</td><td>428</td></tr>
+    <tr><td>+ 3×3 chain</td><td>chain 길이 2</td><td class="num">1182</td><td class="num">231%</td><td class="num">175%</td><td class="num">—</td><td>406</td></tr>
+    <tr><td>+ #5 shape fold</td><td>fusion</td><td class="num">1114</td><td class="num">217%</td><td class="num">175%</td><td class="num">—</td><td>356</td></tr>
+    <tr><td>+ #4 Concat S/E</td><td>fusion</td><td class="num">1046</td><td class="num">204%</td><td class="num">175%</td><td class="num">—</td><td>356</td></tr>
+    <tr><td>+ #2/#3 Conv+X</td><td>fusion</td><td class="num">1040</td><td class="num">203%</td><td class="num">175%</td><td class="num">—</td><td>356</td></tr>
+    <tr><td>+ #6 Concat fold</td><td>fusion</td><td class="num">955</td><td class="num">187%</td><td class="num">175%</td><td class="num">—</td><td>319</td></tr>
+    <tr><td>+ 12-core block</td><td>분배</td><td class="num">125 (max)</td><td class="num ok">24.4%</td><td class="num">175%</td><td class="num">—</td><td>queue ✓</td></tr>
+    <tr><td>+ stride 2 chain</td><td>chain 길이 3</td><td class="num">144 (max)</td><td class="num">28.1%</td><td class="num">163%</td><td class="num">—</td><td>chain 14</td></tr>
+    <tr><td>+ interval alloc</td><td>FM fragment 제거</td><td class="num">144 (max)</td><td class="num">28.1%</td><td class="num">121.4%</td><td class="num">2.16B</td><td class="warn">Gemm bogus DMA</td></tr>
+    <tr><td><strong>+ Gemm 수정</strong></td><td><strong>현재 버전</strong></td><td class="num"><strong>144</strong></td><td class="num ok"><strong>28.1%</strong></td><td class="num err"><strong>121.4%</strong></td><td class="num ok"><strong>38.7M</strong></td><td class="ok"><strong>✓ 정상</strong></td></tr>
+  </table>
+</div>
+
+<!-- ============================================================= -->
+<h2>남은 과제</h2>
+<div class="two-col">
+  <div class="card">
+    <h3 class="err">1. SM 121.4% 초과 (~900 KB)</h3>
+    <ul>
+      <li>Weights metadata 2.29 MB 고정 + FM peak 2.64 MB > 4 MB 한도</li>
+      <li>원인: model.0/1 시점 graph input (1.17 MB) + 초기 FM 동시 live</li>
+      <li>해결책 후보:
+        <ul>
+          <li>Graph input tile-streaming (runtime 변경)</li>
+          <li>Chain 역순 tile 처리 (input 위에 output 덮어쓰기)</li>
+          <li>Weight 를 SM 밖으로 (agenda 제외)</li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3 class="warn">2. Critical path 48 ms (pcore 11 집중)</h3>
+    <ul>
+      <li>Simulator 가 pcore 를 index 순 직렬 실행 → 진짜 병렬이 아님</li>
+      <li>실제 HW 에서 critical path ≈ max(per-core work) 로 떨어질 가능성</li>
+      <li>Chain 추가 확장(depthwise 포함)으로 뒷 pcore 부담 분산 가능</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>3. Op fusion ON 비교</h3>
+    <ul>
+      <li>Fusion OFF 기준 현재 수치</li>
+      <li>Fusion ON 시 ERRORS 51, Queue 23% 로 추가 최적화 (단 semantic 변화)</li>
+      <li>두 모드의 cycle 수 비교가 남음</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>4. Layer-level breakdown</h3>
+    <ul>
+      <li>3173 event log 가 있으므로 op 별 cycle 분석 가능</li>
+      <li>어떤 layer 가 critical path 인지, compute vs DMA bound 분류</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>산출물 경로</h2>
+<div class="card">
+  <table>
+    <tr><th>구분</th><th>경로</th></tr>
+    <tr><td>컴파일러</td><td><code>hw-profiling/scripts/onnx_to_ihnn.py</code></td></tr>
+    <tr><td>Binary (.ihnn)</td><td><code>hw-profiling/test/data/yolov10n_onnx.ihnn</code></td></tr>
+    <tr><td>JSON (config)</td><td><code>hw-profiling/test/data/yolov10n_onnx.json</code></td></tr>
+    <tr><td>Pre-sim dump</td><td><code>hw-profiling/test/data/yolov10n_onnx_dump.txt</code></td></tr>
+    <tr><td>Simulator</td><td><code>hw-profiling/build/test/test_yolov10n_onnx_sim</code></td></tr>
+    <tr><td>Sim stdout</td><td><code>hw-profiling/test/data/yolov10n_onnx_sim_stdout.txt</code></td></tr>
+    <tr><td>Sim event log (CSV)</td><td><code>hw-profiling/test/data/yolov10n_onnx_sim_log.txt</code></td></tr>
+    <tr><td>Markdown 보고서</td><td><code>hw-profiling/docs/yolov10n_profiling_report.md</code></td></tr>
+    <tr><td>본 HTML 보고서</td><td><code>hw-profiling/docs/yolov10n_profiling_report.html</code></td></tr>
+  </table>
+</div>
+
+<!-- ============================================================= -->
+<script>
+// Pcore queue records
+const queueData = [
+  {name: "Pcore 0",  records: 113, pct: 22.1},
+  {name: "Pcore 1",  records: 113, pct: 22.1},
+  {name: "Pcore 2",  records: 122, pct: 23.8},
+  {name: "Pcore 3",  records: 75,  pct: 14.6},
+  {name: "Pcore 4",  records: 113, pct: 22.1},
+  {name: "Pcore 5",  records: 39,  pct: 7.6},
+  {name: "Pcore 6",  records: 28,  pct: 5.5},
+  {name: "Pcore 7",  records: 97,  pct: 18.9},
+  {name: "Pcore 8",  records: 109, pct: 21.3},
+  {name: "Pcore 9",  records: 106, pct: 20.7},
+  {name: "Pcore 10", records: 115, pct: 22.5},
+  {name: "Pcore 11", records: 144, pct: 28.1},
+];
+
+// Per-pcore wall times (ms)
+const timeData = [
+  {name: "Pcore 0",  ms: 7.01},
+  {name: "Pcore 1",  ms: 10.77},
+  {name: "Pcore 2",  ms: 16.31},
+  {name: "Pcore 3",  ms: 16.43},
+  {name: "Pcore 4",  ms: 22.63},
+  {name: "Pcore 5",  ms: 24.11},
+  {name: "Pcore 6",  ms: 24.34},
+  {name: "Pcore 7",  ms: 27.48},
+  {name: "Pcore 8",  ms: 34.21},
+  {name: "Pcore 9",  ms: 39.54},
+  {name: "Pcore 10", ms: 44.00},
+  {name: "Pcore 11", ms: 48.41},
+];
+
+const qMax = 100; // full queue
+function renderBars(id, data, valueKey, labelKey, maxVal, labelSuffix, valueFmt) {
+  const container = document.getElementById(id);
+  data.forEach(d => {
+    const row = document.createElement('div');
+    row.className = 'bar-row';
+    const name = document.createElement('div');
+    name.className = 'bar-name';
+    name.textContent = d.name;
+    const track = document.createElement('div');
+    track.className = 'bar-track';
+    const fill = document.createElement('div');
+    fill.className = 'bar-fill';
+    const pct = Math.min(100, (d[valueKey] / maxVal) * 100);
+    fill.style.width = pct.toFixed(1) + '%';
+    track.appendChild(fill);
+    const val = document.createElement('div');
+    val.className = 'bar-value';
+    val.textContent = valueFmt ? valueFmt(d) : (d[valueKey] + labelSuffix);
+    row.appendChild(name);
+    row.appendChild(track);
+    row.appendChild(val);
+    container.appendChild(row);
+  });
+}
+
+renderBars('queue-chart', queueData, 'pct', 'name', 100, '%', (d) => `${d.records} (${d.pct}%)`);
+renderBars('time-chart', timeData, 'ms', 'name', 50, 'ms', (d) => `${d.ms.toFixed(2)} ms`);
+
+// SM layout
+const smTotal = 4194304;
+const weights = 2326192;
+const fm = 2764800;
+const overflow = weights + fm - smTotal;
+
+const smContainer = document.getElementById('sm-layout');
+function addBlock(name, bytes, cls) {
+  const el = document.createElement('div');
+  el.className = 'sm-block ' + cls;
+  const pct = (bytes / smTotal * 100).toFixed(1);
+  const mb = (bytes / 1024 / 1024).toFixed(2);
+  el.style.height = Math.max(20, bytes / smTotal * 120) + 'px';
+  el.innerHTML = `<strong>${name}</strong> &nbsp; ${mb} MB &nbsp; (${pct}% of 4MB)`;
+  smContainer.appendChild(el);
+}
+addBlock('Weight metadata', weights, 'sm-weights');
+addBlock('FM (interval alloc, 153 tensors)', Math.min(fm, smTotal - weights), 'sm-fm');
+if (overflow > 0) {
+  addBlock('Overflow (DMA out-of-bound 구간)', overflow, 'sm-over');
+}
+const free = smTotal - weights - fm;
+if (free > 0) {
+  addBlock('Free', free, 'sm-free');
+}
+</script>
+
+</body>
+</html>
