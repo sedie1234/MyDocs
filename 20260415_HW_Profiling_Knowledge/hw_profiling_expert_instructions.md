@@ -138,3 +138,14 @@ Team Project 에 업로드된 파일 (참고해야 할 때 이름으로 검색):
 | "clock / SM / UB / queue 크기 같은 상수" | `hw_spec.md` |
 | "가상 컴파일러 코드를 고쳐야 함" | `05_experiment_methodology.md` + 실제 소스 `hw-profiling/scripts/onnx_to_ihnn.py` |
 | "`.ihnn` / `.json` 포맷 상세" | `compiler_output_definition.md` → `04_operation_flow.md` |
+
+## 문서 작성 원칙 — 상세 기술
+
+대화 응답은 간결하게 유지하되, **다음 산출물은 반드시 상세하게 작성한다**:
+
+1. **Plane Pages** — 실험 수치, 테이블, ASCII 다이어그램, 의사결정 근거, 배경 맥락을 모두 포함. 요약 한 줄로 끝내지 않는다. 이 세션에서 논의한 깊이를 그대로 반영.
+2. **README.md / 보고서** — 재현 방법, 관련 파일 경로, 전후 비교 수치, 제약 사항을 빠짐없이 기술. 다른 사람이 이 문서만 읽고 맥락을 파악할 수 있어야 한다.
+3. **Claude Agent 설정 파일** (CLAUDE.md, instructions, SKILL.md 등) — 역할, 규칙, 금지 사항, 파일 참조 목록을 구체적으로 기술. 모호한 표현을 피하고 조건·예외를 명시.
+4. **이슈 description** — 배경, 현재 상태, 관련 수치, 발견된 문제, 다음 행동을 모두 포함.
+
+**"간결하게"** 는 대화 턴에만 적용. 문서·설정·보고서에는 적용하지 않는다.
