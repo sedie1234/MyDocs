@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Step3 IdentityElim.md",
+                "file": "Step5 QuantizeRegion.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Step3 IdentityElim"
+              "title": "Step5 QuantizeRegion"
             }
           },
           {
@@ -107,7 +107,8 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 300,
+    "collapsed": true
   },
   "right": {
     "id": "fad43affd28f54aa",
@@ -185,13 +186,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "Step3 IdentityElim.md",
+                "file": "Step5 QuantizeRegion.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Step3 IdentityElim 의 개요"
+              "title": "Step5 QuantizeRegion 의 개요"
             }
           }
         ],
@@ -199,7 +200,8 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 300,
+    "collapsed": true
   },
   "left-ribbon": {
     "hiddenItems": {
@@ -214,12 +216,15 @@
   },
   "active": "1577d4356e43019b",
   "lastOpenFiles": [
+    "Step5 fp32 잔여 분석.md",
+    "Step5 QuantizeRegion.md",
+    "Step4 MathToQDQ.md",
+    "Step3 IdentityElim.md",
     "Step2 Canonicalize + CSE.md",
     "Step0 모델 준비.md",
     "Step1 InlineConstants.md",
     "QDQ Direct 파이프라인.md",
     "Independent Compiler 파이프라인.md",
-    "Step5 fp32 잔여 분석.md",
     "Step5 QuantizeRegion 변환 규칙.md",
     "i8 허용 Op 목록.md",
     "input_locations 기반 InlineConstantsPass.md",
@@ -240,10 +245,7 @@
     "ExitIREEPass.md",
     "컴파일러 개발일지.md",
     "HAL Ops에서 vtable 함수포인터 호출 흐름.md",
-    "컴파일러 적용과 mlir의 변화.md",
-    "IREE 코드 구성.md",
     "Pasted image 20260107171949.png",
-    "iree-air-aie-architecture.md",
     "iree-air-aie-architecture 2.png",
     "AI-Compiler-code_outline.png",
     "full_pipeline.mlir",

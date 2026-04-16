@@ -1,0 +1,3 @@
+Model,Total_Weight_B,Input_Image_B,Static_Total_B,SM_Size_B,Static_Fit,Peak_Fail_Layers,Worst_Peak_B,Verdict
+v10n,2292576,1228800,3521376,4194304,YES,3,5159776,COND
+v10s,7240032,1228800,8468832,4194304,NO,87,12155232,FAIL

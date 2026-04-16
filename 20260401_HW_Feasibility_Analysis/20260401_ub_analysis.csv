@@ -1,0 +1,7 @@
+Model,Tiling,Total_Layers,Fit_Half(64KiB),Fail_Half,Fail_Full(128KiB),Verdict
+v10n,16x16,83,31,52,26,FAIL
+v10n,32x32,83,3,80,71,FAIL
+v10n,Adaptive,83,72,11,4,COND
+v10s,16x16,87,11,76,56,FAIL
+v10s,32x32,87,1,86,84,FAIL
+v10s,Adaptive,87,49,38,29,FAIL

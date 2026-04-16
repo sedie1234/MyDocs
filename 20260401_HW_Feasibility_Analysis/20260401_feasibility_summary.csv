@@ -1,0 +1,32 @@
+Section,Model,Tiling,Q_used,Q_max,Q_pct,Q_verdict,UB_fail_layers,UB_total_layers,UB_verdict,SM_static_MB,SM_max_MB,SM_peak_MB,SM_verdict,Overall
+종합판정,v10n,16x16,343,512,67%,PASS,52,83,FAIL,3.36,4.00,4.92,COND,FAIL
+종합판정,v10n,32x32,124,512,24%,PASS,80,83,FAIL,3.36,4.00,4.92,COND,FAIL
+종합판정,v10n,Adaptive,908,512,177%,FAIL,11,83,COND,3.36,4.00,4.92,COND,FAIL
+종합판정,v10s,16x16,346,512,68%,PASS,76,87,FAIL,8.07,4.00,N/A,FAIL,FAIL
+종합판정,v10s,32x32,125,512,24%,PASS,86,87,FAIL,8.07,4.00,N/A,FAIL,FAIL
+종합판정,v10s,Adaptive,6404,512,1251%,FAIL,38,87,FAIL,8.07,4.00,N/A,FAIL,FAIL
+
+Section,Resource,Feasibility_Rank,Feasibility_Level,Note
+실현성순위,Q,1,높음,16x16/32x32에서 양 모델 PASS
+실현성순위,SM(v10n),2,중간,정적 PASS 초기 3개 레이어만 우회 필요
+실현성순위,UB(v10n),3,중간-낮음,Weight Streaming 적용 시 해결 가능성
+실현성순위,SM(v10s),4,불가,외부 메모리 또는 SM 확장 없이 해결 불가
+
+Section,Model,Layer_idx,Layer_name,Issue,Weight_KB,Peak_MB,SM_MB,Delta_MB
+SM_FAIL,v10n,0,model.0.conv,input+output FM 초과,0.4,4.92,4.00,-0.92
+SM_FAIL,v10n,1,model.1.conv,input+output FM 초과,4.5,4.53,4.00,-0.53
+SM_FAIL,v10n,5,model.2.cv2.conv,input+output FM 초과,1.5,4.14,4.00,-0.14
+SM_FAIL,v10s,ALL,ALL,weight 단독 초과,6900,N/A,4.00,-2.90
+
+Section,Model,Layer_idx,Layer_name,Type,Weight_KB,UB_issue
+UB_FAIL_v10n_adaptive,v10n,16,model.6.m.0.cv1,Conv3x3 C64-64,36,weight+tile > 64KiB
+UB_FAIL_v10n_adaptive,v10n,17,model.6.m.0.cv2,Conv3x3 C64-64,36,weight+tile > 64KiB
+UB_FAIL_v10n_adaptive,v10n,18,model.6.m.1.cv1,Conv3x3 C64-64,36,weight+tile > 64KiB
+UB_FAIL_v10n_adaptive,v10n,19,model.6.m.1.cv2,Conv3x3 C64-64,36,weight+tile > 64KiB
+UB_FAIL_v10n_adaptive,v10n,24,model.8.m.0.cv1,Conv3x3 C128-128,144,weight 단독 > UB half
+UB_FAIL_v10n_adaptive,v10n,25,model.8.m.0.cv2,Conv3x3 C128-128,144,weight 단독 > UB half
+UB_FAIL_v10n_adaptive,v10n,28,model.9.cv2,1x1 C512-256,128,weight 단독 > UB half
+UB_FAIL_v10n_adaptive,v10n,35,model.10.cv2,1x1 C256-256,64,경계 초과
+UB_FAIL_v10n_adaptive,v10n,65,one2one_cv2.2.0,Conv3x3 C256-64,144,weight 단독 > UB half
+UB_FAIL_v10n_adaptive,v10n,46,model.19.m.0.cv1,Conv3x3 C64-64,36,weight+tile > 64KiB
+UB_FAIL_v10n_adaptive,v10n,47,model.19.m.0.cv2,Conv3x3 C64-64,36,weight+tile > 64KiB

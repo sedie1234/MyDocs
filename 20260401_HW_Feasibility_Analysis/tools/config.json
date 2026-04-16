@@ -1,0 +1,32 @@
+{
+  "models": ["v10n", "v10s"],
+  "cores": 12,
+  "margin_factor": 1.5,
+
+  "execution_model": "sequential",
+
+  "hardware": {
+    "q_size_bytes": 131072,
+    "q_record_size": 256,
+    "q_max_records": 512,
+    "ub_size_bytes": 262144,
+    "ub_half_bytes": 131072,
+    "sm_size_bytes": 4194304
+  },
+
+  "tiling_cases": [
+    {"name": "Adaptive_Half", "type": "adaptive", "budget_bytes": 131072},
+    {"name": "Adaptive_Full", "type": "adaptive", "budget_bytes": 262144}
+  ],
+
+  "policies": {
+    "weight_loading": "sm_once",
+    "weight_stationary": true,
+    "q_loading": "once",
+    "input_loading": "sm_once",
+    "input_size_bytes": 1228800,
+    "metadata_overhead_bytes": 512,
+    "weight_in_ub": true,
+    "sm_input_output_overlap": true
+  }
+}

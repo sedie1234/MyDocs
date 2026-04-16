@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HW Profiling Timeline</title>
+<style>
+body { margin: 0; font-family: -apple-system, "Segoe UI", sans-serif;
+       background: #fafafa; color: #222; }
+#header { padding: 10px 16px; background: #2c3e50; color: #fff;
+          display: flex; justify-content: space-between; align-items: baseline; }
+#header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+#header .stats { font-size: 12px; opacity: .85; }
+#toolbar { padding: 8px 16px; background: #ecf0f1; border-bottom: 1px solid #ccc;
+           display: flex; gap: 12px; align-items: center; font-size: 12px; }
+#toolbar button { padding: 4px 10px; font-size: 12px; cursor: pointer;
+                  border: 1px solid #bbb; background: #fff; border-radius: 3px; }
+#toolbar button:hover { background: #f0f0f0; }
+.panel { margin: 8px 16px; background: #fff; border: 1px solid #ddd;
+         border-radius: 4px; padding: 8px; }
+.panel h2 { margin: 0 0 6px 6px; font-size: 13px; color: #34495e;
+            border-bottom: 1px solid #eee; padding-bottom: 4px; }
+#tooltip { position: fixed; pointer-events: none; background: rgba(30,30,40,.95);
+           color: #fff; padding: 8px 10px; border-radius: 4px; font-size: 11px;
+           font-family: "SF Mono", Menlo, monospace; display: none; max-width: 380px;
+           line-height: 1.4; z-index: 100; white-space: pre; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px;
+          padding: 4px 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend .sw { display: inline-block; width: 12px; height: 10px; border: 1px solid #888; }
+svg { display: block; width: 100%; }
+.axis text { font-size: 10px; fill: #555; }
+.axis line, .axis path { stroke: #888; stroke-width: 1; fill: none; }
+.row-label { font-size: 10px; font-family: "SF Mono", Menlo, monospace; fill: #333; }
+.row-bg { fill: #f7f7f9; }
+.row-bg:hover { fill: #eef; }
+.grid line { stroke: #e5e5e5; stroke-width: .5; }
+rect.block { stroke: rgba(0,0,0,.15); stroke-width: .3; cursor: pointer; }
+rect.block:hover { stroke: #000; stroke-width: 1; }
+rect.sm-region { stroke: none; }
+rect.sm-meta { fill: #dde8f3; }
+rect.sm-input { fill: #ffe9cc; }
+rect.sm-output { fill: #e8d7f3; }
+rect.sm-forbidden { fill: #f5d0d0; }
+line.playhead { stroke: #e67e22; stroke-width: 1.5; stroke-dasharray: 3,2; pointer-events: none; }
+line.playhead-pinned { stroke: #c0392b; stroke-width: 2; stroke-dasharray: none; pointer-events: none; }
+#layout { display: flex; gap: 8px; padding: 0 8px; }
+#timelines { flex: 1 1 auto; min-width: 0; }
+#statePanel { width: 320px; flex-shrink: 0; background: #fff; border: 1px solid #ddd;
+              border-radius: 4px; padding: 8px 10px; font-size: 11px;
+              font-family: "SF Mono", Menlo, monospace; margin-top: 8px;
+              max-height: calc(100vh - 120px); overflow-y: auto; }
+#statePanel h3 { margin: 6px 0 4px; font-size: 12px; color: #2c3e50;
+                 border-bottom: 1px solid #eee; padding-bottom: 2px; }
+#statePanel .sp-cycle { font-size: 13px; color: #c0392b; font-weight: bold; }
+#statePanel table { width: 100%; border-collapse: collapse; font-size: 10px; }
+#statePanel td { padding: 2px 4px; border-bottom: 1px solid #f0f0f0;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#statePanel td.st-idle   { color: #888; }
+#statePanel td.st-wait   { color: #c0392b; }
+#statePanel td.st-active { color: #2c3e50; font-weight: bold; }
+#statePanel td.st-key    { color: #555; width: 60px; }
+#statePanel .pill { display: inline-block; width: 10px; height: 10px;
+                    margin-right: 3px; vertical-align: middle; border: 1px solid #888; }
+#jumpCycle { width: 100px; padding: 2px 4px; font-size: 11px;
+             font-family: "SF Mono", Menlo, monospace; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>HW Profiling Timeline — <span id="src"></span></h1>
+  <div class="stats" id="statsline"></div>
+</div>
+<div id="toolbar">
+  <button onclick="zoom(2)">Zoom +</button>
+  <button onclick="zoom(0.5)">Zoom -</button>
+  <button onclick="resetZoom()">Reset</button>
+  <button onclick="pan(-0.5)">◀◀</button>
+  <button onclick="pan(-0.1)">◀</button>
+  <button onclick="pan(0.1)">▶</button>
+  <button onclick="pan(0.5)">▶▶</button>
+  <span style="margin-left:6px">Jump:</span>
+  <input id="jumpCycle" type="number" placeholder="cycle" min="0" />
+  <button onclick="jumpToInput()">Go</button>
+  <button onclick="togglePin()" id="pinBtn">📌 Pin</button>
+  <span id="rangeInfo" style="margin-left:8px;color:#555"></span>
+  <span style="margin-left:auto">Drag / WASD · ←→↑↓ / wheel · Shift=big · Click=pin · Space=toggle</span>
+</div>
+<div id="layout">
+  <div id="timelines">
+    <div class="panel">
+      <h2>Core Compute (12 pcores) — 빨강 = 연산 대기</h2>
+      <div class="legend" id="legendCompute"></div>
+      <svg id="svgCore"></svg>
+    </div>
+    <div class="panel">
+      <h2>DMA Bus (6 shared buses)</h2>
+      <div class="legend">
+        <span><span class="sw" style="background:#5dade2"></span>Regular DMA</span>
+        <span><span class="sw" style="background:#f4d03f"></span>Prefetch</span>
+      </div>
+      <svg id="svgDma"></svg>
+    </div>
+    <div class="panel">
+      <h2>Shared Memory Map — y축 = SM 주소 (0 = 최상단), 색 = SM touch 구간</h2>
+      <div class="legend">
+        <span><span class="sw sm-meta" style="background:#dde8f3"></span>metadata (readonly)</span>
+        <span><span class="sw sm-input" style="background:#ffe9cc"></span>input</span>
+        <span><span class="sw sm-output" style="background:#e8d7f3"></span>output</span>
+        <span><span class="sw" style="background:#2ecc71"></span>active write</span>
+        <span><span class="sw" style="background:#3498db"></span>active read</span>
+        <span><span class="sw" style="background:#f1c40f;opacity:.5"></span>live (resident data, has reader)</span>
+        <span><span class="sw" style="background:#bdc3c7;opacity:.5"></span>live (no reader observed)</span>
+        <span><span class="sw" style="background:#e74c3c;opacity:.5;border:1px solid #c0392b"></span>refcount LOCK</span>
+      </div>
+      <svg id="svgSm"></svg>
+    </div>
+  </div>
+  <div id="statePanel">
+    <h3>Cursor @ <span class="sp-cycle" id="spCycle">—</span>
+        <span id="spMode" style="font-size:10px;color:#888"></span></h3>
+    <div id="spTime" style="color:#888;font-size:10px;margin-bottom:6px"></div>
+    <h3>Core State (12 pcores)</h3>
+    <table id="spCores"><tbody></tbody></table>
+    <h3>DMA Bus State (6)</h3>
+    <table id="spBuses"><tbody></tbody></table>
+    <h3>SM Activity</h3>
+    <table id="spSm"><tbody></tbody></table>
+    <h3>SM Live Residency</h3>
+    <div id="spLiveSummary" style="font-size:10px;color:#555;margin-bottom:4px"></div>
+    <table id="spLive"><tbody></tbody></table>
+  </div>
+</div>
+<div id="tooltip"></div>
+<script>
+const DATA = {"end_cycle":26380156,"clock_mhz":800,"sm_size":4194304,"sm_regions":{"metadata":{"address":0,"size":2312448},"input":{"address":2314496,"size":1228800},"output":{"address":2312448,"size":2048},"forbidden":{"address":0,"size":0}},"cores":{"0":[{"t":"c","s":14089,"e":289289,"op":1,"label":"Conv"},{"t":"w","s":289289,"e":303256},{"t":"c","s":303256,"e":578456,"op":1,"label":"Conv"},{"t":"w","s":578456,"e":592423},{"t":"c","s":592423,"e":867623,"op":1,"label":"Conv"},{"t":"w","s":867623,"e":881590},{"t":"c","s":881590,"e":1156790,"op":1,"label":"Conv"},{"t":"w","s":1156790,"e":1170757},{"t":"c","s":1170757,"e":1445957,"op":1,"label":"Conv"},{"t":"w","s":1445957,"e":1459924},{"t":"c","s":1459924,"e":1735124,"op":1,"label":"Conv"},{"t":"w","s":1735124,"e":1749091},{"t":"c","s":1749091,"e":2024291,"op":1,"label":"Conv"},{"t":"w","s":2024291,"e":2038258},{"t":"c","s":2038258,"e":2313458,"op":1,"label":"Conv"},{"t":"w","s":2313458,"e":2327425},{"t":"c","s":2327425,"e":2602625,"op":1,"label":"Conv"},{"t":"w","s":2602625,"e":2616592},{"t":"c","s":2616592,"e":2891792,"op":1,"label":"Conv"},{"t":"w","s":2891792,"e":2905759},{"t":"c","s":2905759,"e":3180959,"op":1,"label":"Conv"},{"t":"w","s":3180959,"e":3194926},{"t":"c","s":3194926,"e":3470126,"op":1,"label":"Conv"},{"t":"w","s":3470126,"e":3484093},{"t":"c","s":3484093,"e":3759293,"op":1,"label":"Conv"},{"t":"w","s":3759293,"e":3773260},{"t":"c","s":3773260,"e":4048460,"op":1,"label":"Conv"},{"t":"w","s":4048460,"e":4062427},{"t":"c","s":4062427,"e":4337627,"op":1,"label":"Conv"},{"t":"w","s":4337627,"e":4351594},{"t":"c","s":4351594,"e":4626794,"op":1,"label":"Conv"},{"t":"w","s":4626794,"e":4640761},{"t":"c","s":4640761,"e":4915961,"op":1,"label":"Conv"},{"t":"w","s":4915961,"e":4929928},{"t":"c","s":4929928,"e":5205128,"op":1,"label":"Conv"},{"t":"w","s":5205128,"e":5219095},{"t":"c","s":5219095,"e":5494295,"op":1,"label":"Conv"},{"t":"w","s":5494295,"e":5508262},{"t":"c","s":5508262,"e":5783462,"op":1,"label":"Conv"},{"t":"w","s":5783462,"e":5797429},{"t":"c","s":5797429,"e":6072629,"op":1,"label":"Conv"},{"t":"w","s":6072629,"e":6086596},{"t":"c","s":6086596,"e":6361796,"op":1,"label":"Conv"}],"1":[{"t":"c","s":5509430,"e":6021430,"op":1,"label":"Conv"},{"t":"w","s":6021430,"e":6036794},{"t":"c","s":6036794,"e":6548794,"op":1,"label":"Conv"},{"t":"w","s":6548794,"e":6564158},{"t":"c","s":6564158,"e":7076158,"op":1,"label":"Conv"},{"t":"w","s":7076158,"e":7091522},{"t":"c","s":7091522,"e":7603522,"op":1,"label":"Conv"},{"t":"w","s":7603522,"e":7618886},{"t":"c","s":7618886,"e":8130886,"op":1,"label":"Conv"},{"t":"w","s":8130886,"e":8146250},{"t":"c","s":8146250,"e":8658250,"op":1,"label":"Conv"},{"t":"w","s":8658250,"e":8673614},{"t":"c","s":8673614,"e":9185614,"op":1,"label":"Conv"},{"t":"w","s":9185614,"e":9200978},{"t":"c","s":9200978,"e":9712978,"op":1,"label":"Conv"},{"t":"w","s":9712978,"e":9728342},{"t":"c","s":9728342,"e":10240342,"op":1,"label":"Conv"},{"t":"w","s":10240342,"e":10255706},{"t":"c","s":10255706,"e":10767706,"op":1,"label":"Conv"},{"t":"w","s":10767706,"e":10783070},{"t":"c","s":10783070,"e":11295070,"op":1,"label":"Conv"},{"t":"w","s":11295070,"e":11310434},{"t":"c","s":11310434,"e":11822434,"op":1,"label":"Conv"},{"t":"w","s":11822434,"e":11837798},{"t":"c","s":11837798,"e":12349798,"op":1,"label":"Conv"},{"t":"w","s":12349798,"e":12365162},{"t":"c","s":12365162,"e":12877162,"op":1,"label":"Conv"},{"t":"w","s":12877162,"e":12892526},{"t":"c","s":12892526,"e":13404526,"op":1,"label":"Conv"},{"t":"w","s":13404526,"e":13419890},{"t":"c","s":13419890,"e":13931890,"op":1,"label":"Conv"},{"t":"w","s":13931890,"e":13947254},{"t":"c","s":13947254,"e":14459254,"op":1,"label":"Conv"},{"t":"w","s":14459254,"e":14474618},{"t":"c","s":14474618,"e":14986618,"op":1,"label":"Conv"},{"t":"w","s":14986618,"e":15001982},{"t":"c","s":15001982,"e":15513982,"op":1,"label":"Conv"},{"t":"w","s":15513982,"e":15529346},{"t":"c","s":15529346,"e":16041346,"op":1,"label":"Conv"}],"2":[{"t":"c","s":13420162,"e":13573762,"op":1,"label":"Conv"},{"t":"w","s":13573762,"e":13589522},{"t":"c","s":13589522,"e":13743122,"op":1,"label":"Conv"},{"t":"w","s":13743122,"e":13758882},{"t":"c","s":13758882,"e":13912482,"op":1,"label":"Conv"},{"t":"w","s":13912482,"e":13928242},{"t":"c","s":13928242,"e":14081842,"op":1,"label":"Conv"},{"t":"w","s":14081842,"e":14097602},{"t":"c","s":14097602,"e":14251202,"op":1,"label":"Conv"},{"t":"w","s":14251202,"e":14266962},{"t":"c","s":14266962,"e":14420562,"op":1,"label":"Conv"},{"t":"w","s":14420562,"e":14436322},{"t":"c","s":14436322,"e":14589922,"op":1,"label":"Conv"},{"t":"w","s":14589922,"e":14605682},{"t":"c","s":14605682,"e":14759282,"op":1,"label":"Conv"},{"t":"w","s":14759282,"e":14775042},{"t":"c","s":14775042,"e":14928642,"op":1,"label":"Conv"},{"t":"w","s":14928642,"e":14944402},{"t":"c","s":14944402,"e":15098002,"op":1,"label":"Conv"},{"t":"w","s":15098002,"e":15113762},{"t":"c","s":15113762,"e":15267362,"op":1,"label":"Conv"},{"t":"w","s":15267362,"e":15283122},{"t":"c","s":15283122,"e":15436722,"op":1,"label":"Conv"},{"t":"w","s":15436722,"e":15452482},{"t":"c","s":15452482,"e":15606082,"op":1,"label":"Conv"}],"3":[{"t":"c","s":15128986,"e":15384986,"op":1,"label":"Conv"},{"t":"w","s":15384986,"e":15406938},{"t":"c","s":15406938,"e":15662938,"op":1,"label":"Conv"},{"t":"w","s":15662938,"e":15684890},{"t":"c","s":15684890,"e":15940890,"op":1,"label":"Conv"},{"t":"w","s":15940890,"e":15962842},{"t":"c","s":15962842,"e":16218842,"op":1,"label":"Conv"},{"t":"w","s":16218842,"e":16240794},{"t":"c","s":16240794,"e":16496794,"op":1,"label":"Conv"},{"t":"w","s":16496794,"e":16518746},{"t":"c","s":16518746,"e":16774746,"op":1,"label":"Conv"},{"t":"w","s":16774746,"e":16796698},{"t":"c","s":16796698,"e":17052698,"op":1,"label":"Conv"}],"4":[{"t":"c","s":16241382,"e":16497382,"op":1,"label":"Conv"},{"t":"w","s":16497382,"e":16512018},{"t":"c","s":16512018,"e":16768018,"op":1,"label":"Conv"},{"t":"w","s":16768018,"e":16782654},{"t":"c","s":16782654,"e":17038654,"op":1,"label":"Conv"},{"t":"w","s":17038654,"e":17053290},{"t":"c","s":17053290,"e":17309290,"op":1,"label":"Conv"},{"t":"w","s":17309290,"e":17323926},{"t":"c","s":17323926,"e":17579926,"op":1,"label":"Conv"},{"t":"w","s":17579926,"e":17594562},{"t":"c","s":17594562,"e":17850562,"op":1,"label":"Conv"},{"t":"w","s":17850562,"e":17865198},{"t":"c","s":17865198,"e":18121198,"op":1,"label":"Conv"}],"5":[{"t":"c","s":17072894,"e":17277694,"op":1,"label":"Conv"},{"t":"w","s":17277694,"e":17296898},{"t":"c","s":17296898,"e":17501698,"op":1,"label":"Conv"},{"t":"w","s":17501698,"e":17520902},{"t":"c","s":17520902,"e":17725702,"op":1,"label":"Conv"},{"t":"w","s":17725702,"e":17744906},{"t":"c","s":17744906,"e":17949706,"op":1,"label":"Conv"},{"t":"w","s":17949706,"e":17968910},{"t":"c","s":17968910,"e":18173710,"op":1,"label":"Conv"},{"t":"w","s":18173710,"e":18192914},{"t":"c","s":18192914,"e":18397714,"op":1,"label":"Conv"},{"t":"w","s":18397714,"e":18416918},{"t":"c","s":18416918,"e":18621718,"op":1,"label":"Conv"},{"t":"w","s":18621718,"e":18640922},{"t":"c","s":18640922,"e":18845722,"op":1,"label":"Conv"},{"t":"w","s":18845722,"e":18864926},{"t":"c","s":18864926,"e":19069726,"op":1,"label":"Conv"},{"t":"w","s":19069726,"e":19088930},{"t":"c","s":19088930,"e":19293730,"op":1,"label":"Conv"},{"t":"w","s":19293730,"e":19312934},{"t":"c","s":19312934,"e":19517734,"op":1,"label":"Conv"},{"t":"w","s":19517734,"e":19536938},{"t":"c","s":19536938,"e":19741738,"op":1,"label":"Conv"},{"t":"w","s":19741738,"e":19760942},{"t":"c","s":19760942,"e":19965742,"op":1,"label":"Conv"},{"t":"w","s":19965742,"e":19984946},{"t":"c","s":19984946,"e":20189746,"op":1,"label":"Conv"},{"t":"w","s":20189746,"e":20208950},{"t":"c","s":20208950,"e":20413750,"op":1,"label":"Conv"},{"t":"w","s":20413750,"e":20432954},{"t":"c","s":20432954,"e":20637754,"op":1,"label":"Conv"}],"6":[{"t":"c","s":19989578,"e":20475978,"op":1,"label":"Conv"},{"t":"w","s":20475978,"e":20482964},{"t":"c","s":20482964,"e":20969364,"op":1,"label":"Conv"},{"t":"w","s":20969364,"e":20976350},{"t":"c","s":20976350,"e":21462750,"op":1,"label":"Conv"},{"t":"w","s":21462750,"e":21469736},{"t":"c","s":21469736,"e":21956136,"op":1,"label":"Conv"},{"t":"w","s":21956136,"e":21963122},{"t":"c","s":21963122,"e":22449522,"op":1,"label":"Conv"},{"t":"w","s":22449522,"e":22456508},{"t":"c","s":22456508,"e":22942908,"op":1,"label":"Conv"},{"t":"w","s":22942908,"e":22949894},{"t":"c","s":22949894,"e":23436294,"op":1,"label":"Conv"},{"t":"w","s":23436294,"e":23443280},{"t":"c","s":23443280,"e":23929680,"op":1,"label":"Conv"},{"t":"w","s":23929680,"e":23936666},{"t":"c","s":23936666,"e":24423066,"op":1,"label":"Conv"},{"t":"w","s":24423066,"e":24430052},{"t":"c","s":24430052,"e":24916452,"op":1,"label":"Conv"},{"t":"w","s":24916452,"e":24923438},{"t":"c","s":24923438,"e":25409838,"op":1,"label":"Conv"}],"7":[{"t":"c","s":22950942,"e":23078942,"op":1,"label":"Conv"},{"t":"w","s":23078942,"e":23093578},{"t":"c","s":23093578,"e":23221578,"op":1,"label":"Conv"},{"t":"w","s":23221578,"e":23236214},{"t":"c","s":23236214,"e":23364214,"op":1,"label":"Conv"},{"t":"w","s":23364214,"e":23378850},{"t":"c","s":23378850,"e":23506850,"op":1,"label":"Conv"},{"t":"w","s":23506850,"e":23521486},{"t":"c","s":23521486,"e":23649486,"op":1,"label":"Conv"},{"t":"w","s":23649486,"e":23664122},{"t":"c","s":23664122,"e":23792122,"op":1,"label":"Conv"},{"t":"w","s":23792122,"e":23806758},{"t":"c","s":23806758,"e":23934758,"op":1,"label":"Conv"}],"8":[{"t":"c","s":23821882,"e":24065082,"op":1,"label":"Conv"},{"t":"w","s":24065082,"e":24074684},{"t":"c","s":24074684,"e":24317884,"op":1,"label":"Conv"},{"t":"w","s":24317884,"e":24327486},{"t":"c","s":24327486,"e":24570686,"op":1,"label":"Conv"},{"t":"w","s":24570686,"e":24580288},{"t":"c","s":24580288,"e":24823488,"op":1,"label":"Conv"}],"9":[{"t":"c","s":24342610,"e":24585810,"op":1,"label":"Conv"},{"t":"w","s":24585810,"e":24598614},{"t":"c","s":24598614,"e":24841814,"op":1,"label":"Conv"},{"t":"w","s":24841814,"e":24854618},{"t":"c","s":24854618,"e":25097818,"op":1,"label":"Conv"},{"t":"w","s":25097818,"e":25110622},{"t":"c","s":25110622,"e":25353822,"op":1,"label":"Conv"}],"10":[{"t":"c","s":24848214,"e":25091414,"op":1,"label":"Conv"},{"t":"w","s":25091414,"e":25101016},{"t":"c","s":25101016,"e":25344216,"op":1,"label":"Conv"},{"t":"w","s":25344216,"e":25353818},{"t":"c","s":25353818,"e":25597018,"op":1,"label":"Conv"},{"t":"w","s":25597018,"e":25606620},{"t":"c","s":25606620,"e":25849820,"op":1,"label":"Conv"}],"11":[{"t":"c","s":25356138,"e":25599338,"op":1,"label":"Conv"},{"t":"w","s":25599338,"e":25612142},{"t":"c","s":25612142,"e":25855342,"op":1,"label":"Conv"},{"t":"w","s":25855342,"e":25868146},{"t":"c","s":25868146,"e":26111346,"op":1,"label":"Conv"},{"t":"w","s":26111346,"e":26124150},{"t":"c","s":26124150,"e":26367350,"op":1,"label":"Conv"}]},"dma_per_bus":{"0":[{"start":1,"end":113,"bus":0,"core":0,"src_buf":24,"dst_buf":0,"src_addr":0,"dst_addr":0,"size":432,"prefetch":false},{"start":578456,"end":592423,"bus":0,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":1445957,"end":1459924,"bus":0,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":2313458,"end":2327425,"bus":0,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":3180959,"end":3194926,"bus":0,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":4048460,"end":4062427,"bus":0,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":4915961,"end":4929928,"bus":0,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":5783462,"end":5797429,"bus":0,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":7076158,"end":7091522,"bus":0,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":10240342,"end":10255706,"bus":0,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":13404526,"end":13419890,"bus":0,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":13419890,"end":13420150,"bus":0,"core":2,"src_buf":24,"dst_buf":2,"src_addr":5632,"dst_addr":0,"size":1024,"prefetch":false},{"start":13420150,"end":13420162,"bus":0,"core":2,"src_buf":24,"dst_buf":2,"src_addr":6656,"dst_addr":0,"size":32,"prefetch":false},{"start":13573762,"end":13589522,"bus":0,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2314496,"size":63015,"prefetch":false},{"start":13743122,"end":13758882,"bus":0,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2377511,"size":63015,"prefetch":false},{"start":13912482,"end":13928242,"bus":0,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2440526,"size":63015,"prefetch":false},{"start":14081842,"end":14097602,"bus":0,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2503541,"size":63015,"prefetch":false},{"start":14420562,"end":14436322,"bus":0,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2629571,"size":63015,"prefetch":false},{"start":14759282,"end":14775042,"bus":0,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2755601,"size":63015,"prefetch":false},{"start":15267362,"end":15283122,"bus":0,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2944646,"size":63015,"prefetch":false},{"start":15406938,"end":15421574,"bus":0,"core":3,"src_buf":24,"dst_buf":3,"src_addr":117028,"dst_addr":0,"size":58514,"prefetch":true},{"start":15684890,"end":15699526,"bus":0,"core":3,"src_buf":24,"dst_buf":3,"src_addr":175542,"dst_addr":0,"size":58514,"prefetch":true},{"start":16496794,"end":16518746,"bus":0,"core":3,"src_buf":3,"dst_buf":4,"src_addr":0,"dst_addr":0,"size":58514,"prefetch":false},{"start":17309290,"end":17323926,"bus":0,"core":4,"src_buf":4,"dst_buf":18,"src_addr":0,"dst_addr":3309238,"size":58514,"prefetch":false},{"start":17725702,"end":17744906,"bus":0,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":18173710,"end":18192914,"bus":0,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":18845722,"end":18864926,"bus":0,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":19517734,"end":19536938,"bus":0,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":20189746,"end":20208950,"bus":0,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":21462750,"end":21469736,"bus":0,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":24423066,"end":24430052,"bus":0,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":24841814,"end":24854618,"bus":0,"core":9,"src_buf":9,"dst_buf":18,"src_addr":0,"dst_addr":3184896,"size":51200,"prefetch":false},{"start":25091414,"end":25101016,"bus":0,"core":10,"src_buf":10,"dst_buf":-1,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":25353818,"end":25366622,"bus":0,"core":10,"src_buf":24,"dst_buf":-1,"src_addr":153600,"dst_addr":0,"size":51200,"prefetch":true},{"start":25855342,"end":25868146,"bus":0,"core":11,"src_buf":11,"dst_buf":18,"src_addr":0,"dst_addr":3389696,"size":51200,"prefetch":false}],"1":[{"start":113,"end":121,"bus":1,"core":0,"src_buf":24,"dst_buf":0,"src_addr":512,"dst_addr":0,"size":16,"prefetch":false},{"start":592423,"end":606391,"bus":1,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2482058,"dst_addr":0,"size":55854,"prefetch":true},{"start":1459924,"end":1473892,"bus":1,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2649620,"dst_addr":0,"size":55854,"prefetch":true},{"start":2327425,"end":2341393,"bus":1,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2817182,"dst_addr":0,"size":55854,"prefetch":true},{"start":3194926,"end":3208894,"bus":1,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2984744,"dst_addr":0,"size":55854,"prefetch":true},{"start":4062427,"end":4076395,"bus":1,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3152306,"dst_addr":0,"size":55854,"prefetch":true},{"start":4929928,"end":4943896,"bus":1,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3319868,"dst_addr":0,"size":55854,"prefetch":true},{"start":5797429,"end":5811397,"bus":1,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3487430,"dst_addr":0,"size":55854,"prefetch":true},{"start":7603522,"end":7618886,"bus":1,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":10767706,"end":10783070,"bus":1,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":13931890,"end":13947254,"bus":1,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":14251202,"end":14266962,"bus":1,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2566556,"size":63015,"prefetch":false},{"start":14589922,"end":14605682,"bus":1,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2692586,"size":63015,"prefetch":false},{"start":15098002,"end":15113762,"bus":1,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2881631,"size":63015,"prefetch":false},{"start":15113762,"end":15114342,"bus":1,"core":3,"src_buf":24,"dst_buf":3,"src_addr":6912,"dst_addr":0,"size":2304,"prefetch":false},{"start":15114342,"end":15114350,"bus":1,"core":3,"src_buf":24,"dst_buf":3,"src_addr":9216,"dst_addr":0,"size":16,"prefetch":false},{"start":15114350,"end":15128986,"bus":1,"core":3,"src_buf":24,"dst_buf":3,"src_addr":0,"dst_addr":0,"size":58514,"prefetch":false},{"start":15128986,"end":15143622,"bus":1,"core":3,"src_buf":24,"dst_buf":3,"src_addr":58514,"dst_addr":0,"size":58514,"prefetch":true},{"start":15384986,"end":15406938,"bus":1,"core":3,"src_buf":3,"dst_buf":4,"src_addr":0,"dst_addr":0,"size":58514,"prefetch":false},{"start":15662938,"end":15684890,"bus":1,"core":3,"src_buf":3,"dst_buf":4,"src_addr":0,"dst_addr":0,"size":58514,"prefetch":false},{"start":16240794,"end":16255430,"bus":1,"core":3,"src_buf":24,"dst_buf":3,"src_addr":292570,"dst_addr":0,"size":58514,"prefetch":true},{"start":16768018,"end":16782654,"bus":1,"core":4,"src_buf":4,"dst_buf":18,"src_addr":0,"dst_addr":3192210,"size":58514,"prefetch":false},{"start":17850562,"end":17865198,"bus":1,"core":4,"src_buf":4,"dst_buf":18,"src_addr":0,"dst_addr":3426266,"size":58514,"prefetch":false},{"start":18397714,"end":18416918,"bus":1,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":19069726,"end":19088930,"bus":1,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":19741738,"end":19760942,"bus":1,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":20413750,"end":20432954,"bus":1,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":22449522,"end":22456508,"bus":1,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":25409838,"end":25416824,"bus":1,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":26367350,"end":26380154,"bus":1,"core":11,"src_buf":11,"dst_buf":18,"src_addr":0,"dst_addr":3492096,"size":51200,"prefetch":false}],"2":[{"start":121,"end":14089,"bus":2,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2314496,"dst_addr":0,"size":55854,"prefetch":false},{"start":867623,"end":881590,"bus":2,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":1735124,"end":1749091,"bus":2,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":2602625,"end":2616592,"bus":2,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":3470126,"end":3484093,"bus":2,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":4337627,"end":4351594,"bus":2,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":5205128,"end":5219095,"bus":2,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":6072629,"end":6086596,"bus":2,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":8658250,"end":8673614,"bus":2,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":11822434,"end":11837798,"bus":2,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":14986618,"end":15001982,"bus":2,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":15606082,"end":15621842,"bus":2,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":3070676,"size":63015,"prefetch":false},{"start":16218842,"end":16240794,"bus":2,"core":3,"src_buf":3,"dst_buf":4,"src_addr":0,"dst_addr":0,"size":58514,"prefetch":false},{"start":16240794,"end":16241374,"bus":2,"core":4,"src_buf":24,"dst_buf":4,"src_addr":9472,"dst_addr":0,"size":2304,"prefetch":false},{"start":16241374,"end":16241382,"bus":2,"core":4,"src_buf":24,"dst_buf":4,"src_addr":11776,"dst_addr":0,"size":16,"prefetch":false},{"start":16497382,"end":16512018,"bus":2,"core":4,"src_buf":4,"dst_buf":18,"src_addr":0,"dst_addr":3133696,"size":58514,"prefetch":false},{"start":17038654,"end":17053290,"bus":2,"core":4,"src_buf":4,"dst_buf":18,"src_addr":0,"dst_addr":3250724,"size":58514,"prefetch":false},{"start":17053290,"end":17053678,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":12032,"dst_addr":0,"size":1536,"prefetch":false},{"start":17053678,"end":17053690,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":13568,"dst_addr":0,"size":32,"prefetch":false},{"start":17053690,"end":17072894,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":0,"dst_addr":0,"size":76800,"prefetch":false},{"start":17072894,"end":17092098,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":76800,"dst_addr":0,"size":76800,"prefetch":true},{"start":17296898,"end":17316102,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":153600,"dst_addr":0,"size":76800,"prefetch":true},{"start":17520902,"end":17540106,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":230400,"dst_addr":0,"size":76800,"prefetch":true},{"start":17949706,"end":17968910,"bus":2,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":18416918,"end":18436122,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":537600,"dst_addr":0,"size":76800,"prefetch":true},{"start":19088930,"end":19108134,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":768000,"dst_addr":0,"size":76800,"prefetch":true},{"start":19760942,"end":19780146,"bus":2,"core":5,"src_buf":24,"dst_buf":5,"src_addr":998400,"dst_addr":0,"size":76800,"prefetch":true},{"start":20637754,"end":20656958,"bus":2,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":23436294,"end":23443280,"bus":2,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":23649486,"end":23664122,"bus":2,"core":7,"src_buf":7,"dst_buf":18,"src_addr":0,"dst_addr":2548552,"size":58514,"prefetch":false},{"start":23934758,"end":23949394,"bus":2,"core":7,"src_buf":7,"dst_buf":18,"src_addr":0,"dst_addr":2665580,"size":58514,"prefetch":false},{"start":24317884,"end":24327486,"bus":2,"core":8,"src_buf":8,"dst_buf":9,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":24823488,"end":24833090,"bus":2,"core":8,"src_buf":8,"dst_buf":9,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":24833090,"end":24835398,"bus":2,"core":10,"src_buf":24,"dst_buf":-1,"src_addr":55808,"dst_addr":0,"size":9216,"prefetch":false},{"start":24835398,"end":24835410,"bus":2,"core":10,"src_buf":24,"dst_buf":-1,"src_addr":65024,"dst_addr":0,"size":32,"prefetch":false},{"start":24835410,"end":24848214,"bus":2,"core":10,"src_buf":24,"dst_buf":-1,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":24848214,"end":24861018,"bus":2,"core":10,"src_buf":24,"dst_buf":-1,"src_addr":51200,"dst_addr":0,"size":51200,"prefetch":true},{"start":25101016,"end":25113820,"bus":2,"core":10,"src_buf":24,"dst_buf":-1,"src_addr":102400,"dst_addr":0,"size":51200,"prefetch":true},{"start":25849820,"end":25859422,"bus":2,"core":10,"src_buf":10,"dst_buf":-1,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false}],"3":[{"start":14089,"end":28057,"bus":3,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2370350,"dst_addr":0,"size":55854,"prefetch":true},{"start":881590,"end":895558,"bus":3,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2537912,"dst_addr":0,"size":55854,"prefetch":true},{"start":1749091,"end":1763059,"bus":3,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2705474,"dst_addr":0,"size":55854,"prefetch":true},{"start":2616592,"end":2630560,"bus":3,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2873036,"dst_addr":0,"size":55854,"prefetch":true},{"start":3484093,"end":3498061,"bus":3,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3040598,"dst_addr":0,"size":55854,"prefetch":true},{"start":4351594,"end":4365562,"bus":3,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3208160,"dst_addr":0,"size":55854,"prefetch":true},{"start":5219095,"end":5233063,"bus":3,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3375722,"dst_addr":0,"size":55854,"prefetch":true},{"start":6361796,"end":6375763,"bus":3,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":9185614,"end":9200978,"bus":3,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":12349798,"end":12365162,"bus":3,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":15513982,"end":15529346,"bus":3,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":15962842,"end":15977478,"bus":3,"core":3,"src_buf":24,"dst_buf":3,"src_addr":234056,"dst_addr":0,"size":58514,"prefetch":true},{"start":16774746,"end":16796698,"bus":3,"core":3,"src_buf":3,"dst_buf":4,"src_addr":0,"dst_addr":0,"size":58514,"prefetch":false},{"start":18121198,"end":18135834,"bus":3,"core":4,"src_buf":4,"dst_buf":18,"src_addr":0,"dst_addr":3484780,"size":58514,"prefetch":false},{"start":18640922,"end":18660126,"bus":3,"core":5,"src_buf":24,"dst_buf":5,"src_addr":614400,"dst_addr":0,"size":76800,"prefetch":true},{"start":19312934,"end":19332138,"bus":3,"core":5,"src_buf":24,"dst_buf":5,"src_addr":844800,"dst_addr":0,"size":76800,"prefetch":true},{"start":19984946,"end":20004150,"bus":3,"core":5,"src_buf":24,"dst_buf":5,"src_addr":1075200,"dst_addr":0,"size":76800,"prefetch":true},{"start":20969364,"end":20976350,"bus":3,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":23929680,"end":23936666,"bus":3,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":24074684,"end":24087488,"bus":3,"core":8,"src_buf":24,"dst_buf":8,"src_addr":102400,"dst_addr":0,"size":51200,"prefetch":true},{"start":24570686,"end":24580288,"bus":3,"core":8,"src_buf":8,"dst_buf":9,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":25097818,"end":25110622,"bus":3,"core":9,"src_buf":9,"dst_buf":18,"src_addr":0,"dst_addr":3236096,"size":51200,"prefetch":false},{"start":25597018,"end":25606620,"bus":3,"core":10,"src_buf":10,"dst_buf":-1,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false}],"4":[{"start":289289,"end":303256,"bus":4,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":1156790,"end":1170757,"bus":4,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":2024291,"end":2038258,"bus":4,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":2891792,"end":2905759,"bus":4,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":3759293,"end":3773260,"bus":4,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":4626794,"end":4640761,"bus":4,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":5494295,"end":5508262,"bus":4,"core":0,"src_buf":0,"dst_buf":1,"src_addr":0,"dst_addr":0,"size":74472,"prefetch":false},{"start":5508262,"end":5509418,"bus":4,"core":1,"src_buf":24,"dst_buf":1,"src_addr":768,"dst_addr":0,"size":4608,"prefetch":false},{"start":5509418,"end":5509430,"bus":4,"core":1,"src_buf":24,"dst_buf":1,"src_addr":5376,"dst_addr":0,"size":32,"prefetch":false},{"start":6021430,"end":6036794,"bus":4,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":8130886,"end":8146250,"bus":4,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":11295070,"end":11310434,"bus":4,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":14459254,"end":14474618,"bus":4,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":14928642,"end":14944402,"bus":4,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":2818616,"size":63015,"prefetch":false},{"start":15436722,"end":15452482,"bus":4,"core":2,"src_buf":2,"dst_buf":18,"src_addr":0,"dst_addr":3007661,"size":63015,"prefetch":false},{"start":15940890,"end":15962842,"bus":4,"core":3,"src_buf":3,"dst_buf":4,"src_addr":0,"dst_addr":0,"size":58514,"prefetch":false},{"start":16518746,"end":16533382,"bus":4,"core":3,"src_buf":24,"dst_buf":3,"src_addr":351084,"dst_addr":0,"size":58514,"prefetch":true},{"start":17579926,"end":17594562,"bus":4,"core":4,"src_buf":4,"dst_buf":18,"src_addr":0,"dst_addr":3367752,"size":58514,"prefetch":false},{"start":17968910,"end":17988114,"bus":4,"core":5,"src_buf":24,"dst_buf":5,"src_addr":384000,"dst_addr":0,"size":76800,"prefetch":true},{"start":18621718,"end":18640922,"bus":4,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":19293730,"end":19312934,"bus":4,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":19965742,"end":19984946,"bus":4,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":19984946,"end":19989558,"bus":4,"core":6,"src_buf":24,"dst_buf":6,"src_addr":13824,"dst_addr":0,"size":18432,"prefetch":false},{"start":19989558,"end":19989578,"bus":4,"core":6,"src_buf":24,"dst_buf":6,"src_addr":32256,"dst_addr":0,"size":64,"prefetch":false},{"start":20475978,"end":20482964,"bus":4,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":22942908,"end":22949894,"bus":4,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":22949894,"end":22950922,"bus":4,"core":7,"src_buf":24,"dst_buf":7,"src_addr":32512,"dst_addr":0,"size":4096,"prefetch":false},{"start":22950922,"end":22950942,"bus":4,"core":7,"src_buf":24,"dst_buf":7,"src_addr":36608,"dst_addr":0,"size":64,"prefetch":false},{"start":23078942,"end":23093578,"bus":4,"core":7,"src_buf":7,"dst_buf":18,"src_addr":0,"dst_addr":2314496,"size":58514,"prefetch":false},{"start":23221578,"end":23236214,"bus":4,"core":7,"src_buf":7,"dst_buf":18,"src_addr":0,"dst_addr":2373010,"size":58514,"prefetch":false},{"start":23364214,"end":23378850,"bus":4,"core":7,"src_buf":7,"dst_buf":18,"src_addr":0,"dst_addr":2431524,"size":58514,"prefetch":false},{"start":23506850,"end":23521486,"bus":4,"core":7,"src_buf":7,"dst_buf":18,"src_addr":0,"dst_addr":2490038,"size":58514,"prefetch":false},{"start":23792122,"end":23806758,"bus":4,"core":7,"src_buf":7,"dst_buf":18,"src_addr":0,"dst_addr":2607066,"size":58514,"prefetch":false},{"start":23806758,"end":23809066,"bus":4,"core":8,"src_buf":24,"dst_buf":8,"src_addr":36864,"dst_addr":0,"size":9216,"prefetch":false},{"start":23809066,"end":23809078,"bus":4,"core":8,"src_buf":24,"dst_buf":8,"src_addr":46080,"dst_addr":0,"size":32,"prefetch":false},{"start":23809078,"end":23821882,"bus":4,"core":8,"src_buf":24,"dst_buf":8,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":23821882,"end":23834686,"bus":4,"core":8,"src_buf":24,"dst_buf":8,"src_addr":51200,"dst_addr":0,"size":51200,"prefetch":true},{"start":24065082,"end":24074684,"bus":4,"core":8,"src_buf":8,"dst_buf":9,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":24327486,"end":24340290,"bus":4,"core":8,"src_buf":24,"dst_buf":8,"src_addr":153600,"dst_addr":0,"size":51200,"prefetch":true},{"start":24340290,"end":24342598,"bus":4,"core":9,"src_buf":24,"dst_buf":9,"src_addr":46336,"dst_addr":0,"size":9216,"prefetch":false},{"start":24342598,"end":24342610,"bus":4,"core":9,"src_buf":24,"dst_buf":9,"src_addr":55552,"dst_addr":0,"size":32,"prefetch":false},{"start":24585810,"end":24598614,"bus":4,"core":9,"src_buf":9,"dst_buf":18,"src_addr":0,"dst_addr":3133696,"size":51200,"prefetch":false},{"start":25353822,"end":25366626,"bus":4,"core":9,"src_buf":9,"dst_buf":18,"src_addr":0,"dst_addr":3287296,"size":51200,"prefetch":false},{"start":26111346,"end":26124150,"bus":4,"core":11,"src_buf":11,"dst_buf":18,"src_addr":0,"dst_addr":3440896,"size":51200,"prefetch":false}],"5":[{"start":303256,"end":317224,"bus":5,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2426204,"dst_addr":0,"size":55854,"prefetch":true},{"start":1170757,"end":1184725,"bus":5,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2593766,"dst_addr":0,"size":55854,"prefetch":true},{"start":2038258,"end":2052226,"bus":5,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2761328,"dst_addr":0,"size":55854,"prefetch":true},{"start":2905759,"end":2919727,"bus":5,"core":0,"src_buf":24,"dst_buf":0,"src_addr":2928890,"dst_addr":0,"size":55854,"prefetch":true},{"start":3773260,"end":3787228,"bus":5,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3096452,"dst_addr":0,"size":55854,"prefetch":true},{"start":4640761,"end":4654729,"bus":5,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3264014,"dst_addr":0,"size":55854,"prefetch":true},{"start":5508262,"end":5522230,"bus":5,"core":0,"src_buf":24,"dst_buf":0,"src_addr":3431576,"dst_addr":0,"size":55854,"prefetch":true},{"start":6548794,"end":6564158,"bus":5,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":9712978,"end":9728342,"bus":5,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":12877162,"end":12892526,"bus":5,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":16041346,"end":16056710,"bus":5,"core":1,"src_buf":1,"dst_buf":2,"src_addr":0,"dst_addr":0,"size":40960,"prefetch":false},{"start":17052698,"end":17074650,"bus":5,"core":3,"src_buf":3,"dst_buf":4,"src_addr":0,"dst_addr":0,"size":58514,"prefetch":false},{"start":17277694,"end":17296898,"bus":5,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":17501698,"end":17520902,"bus":5,"core":5,"src_buf":5,"dst_buf":6,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":17744906,"end":17764110,"bus":5,"core":5,"src_buf":24,"dst_buf":5,"src_addr":307200,"dst_addr":0,"size":76800,"prefetch":true},{"start":18192914,"end":18212118,"bus":5,"core":5,"src_buf":24,"dst_buf":5,"src_addr":460800,"dst_addr":0,"size":76800,"prefetch":true},{"start":18864926,"end":18884130,"bus":5,"core":5,"src_buf":24,"dst_buf":5,"src_addr":691200,"dst_addr":0,"size":76800,"prefetch":true},{"start":19536938,"end":19556142,"bus":5,"core":5,"src_buf":24,"dst_buf":5,"src_addr":921600,"dst_addr":0,"size":76800,"prefetch":true},{"start":20208950,"end":20228154,"bus":5,"core":5,"src_buf":24,"dst_buf":5,"src_addr":1152000,"dst_addr":0,"size":76800,"prefetch":true},{"start":21956136,"end":21963122,"bus":5,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":24916452,"end":24923438,"bus":5,"core":6,"src_buf":6,"dst_buf":7,"src_addr":0,"dst_addr":0,"size":37236,"prefetch":false},{"start":25344216,"end":25353818,"bus":5,"core":10,"src_buf":10,"dst_buf":-1,"src_addr":0,"dst_addr":0,"size":51200,"prefetch":false},{"start":25353818,"end":25356126,"bus":5,"core":11,"src_buf":24,"dst_buf":-1,"src_addr":65280,"dst_addr":0,"size":9216,"prefetch":false},{"start":25356126,"end":25356138,"bus":5,"core":11,"src_buf":24,"dst_buf":-1,"src_addr":74496,"dst_addr":0,"size":32,"prefetch":false},{"start":25599338,"end":25612142,"bus":5,"core":11,"src_buf":11,"dst_buf":18,"src_addr":0,"dst_addr":3338496,"size":51200,"prefetch":false}]},"sm_accesses":[{"start":1,"end":113,"addr":0,"size":432,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":0,"dst_addr":0,"xfer_size":432},{"start":113,"end":121,"addr":512,"size":16,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":512,"dst_addr":0,"xfer_size":16},{"start":121,"end":14089,"addr":2314496,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2314496,"dst_addr":0,"xfer_size":55854},{"start":14089,"end":28057,"addr":2370350,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2370350,"dst_addr":0,"xfer_size":55854},{"start":303256,"end":317224,"addr":2426204,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2426204,"dst_addr":0,"xfer_size":55854},{"start":592423,"end":606391,"addr":2482058,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2482058,"dst_addr":0,"xfer_size":55854},{"start":881590,"end":895558,"addr":2537912,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2537912,"dst_addr":0,"xfer_size":55854},{"start":1170757,"end":1184725,"addr":2593766,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2593766,"dst_addr":0,"xfer_size":55854},{"start":1459924,"end":1473892,"addr":2649620,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2649620,"dst_addr":0,"xfer_size":55854},{"start":1749091,"end":1763059,"addr":2705474,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2705474,"dst_addr":0,"xfer_size":55854},{"start":2038258,"end":2052226,"addr":2761328,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2761328,"dst_addr":0,"xfer_size":55854},{"start":2327425,"end":2341393,"addr":2817182,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2817182,"dst_addr":0,"xfer_size":55854},{"start":2616592,"end":2630560,"addr":2873036,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2873036,"dst_addr":0,"xfer_size":55854},{"start":2905759,"end":2919727,"addr":2928890,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2928890,"dst_addr":0,"xfer_size":55854},{"start":3194926,"end":3208894,"addr":2984744,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":2984744,"dst_addr":0,"xfer_size":55854},{"start":3484093,"end":3498061,"addr":3040598,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3040598,"dst_addr":0,"xfer_size":55854},{"start":3773260,"end":3787228,"addr":3096452,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3096452,"dst_addr":0,"xfer_size":55854},{"start":4062427,"end":4076395,"addr":3152306,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3152306,"dst_addr":0,"xfer_size":55854},{"start":4351594,"end":4365562,"addr":3208160,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3208160,"dst_addr":0,"xfer_size":55854},{"start":4640761,"end":4654729,"addr":3264014,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3264014,"dst_addr":0,"xfer_size":55854},{"start":4929928,"end":4943896,"addr":3319868,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3319868,"dst_addr":0,"xfer_size":55854},{"start":5219095,"end":5233063,"addr":3375722,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3375722,"dst_addr":0,"xfer_size":55854},{"start":5508262,"end":5522230,"addr":3431576,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3431576,"dst_addr":0,"xfer_size":55854},{"start":5797429,"end":5811397,"addr":3487430,"size":55854,"kind":"read","core":0,"src_buf":24,"dst_buf":0,"src_addr":3487430,"dst_addr":0,"xfer_size":55854},{"start":5508262,"end":5509418,"addr":768,"size":4608,"kind":"read","core":1,"src_buf":24,"dst_buf":1,"src_addr":768,"dst_addr":0,"xfer_size":4608},{"start":5509418,"end":5509430,"addr":5376,"size":32,"kind":"read","core":1,"src_buf":24,"dst_buf":1,"src_addr":5376,"dst_addr":0,"xfer_size":32},{"start":13419890,"end":13420150,"addr":5632,"size":1024,"kind":"read","core":2,"src_buf":24,"dst_buf":2,"src_addr":5632,"dst_addr":0,"xfer_size":1024},{"start":13420150,"end":13420162,"addr":6656,"size":32,"kind":"read","core":2,"src_buf":24,"dst_buf":2,"src_addr":6656,"dst_addr":0,"xfer_size":32},{"start":15113762,"end":15114342,"addr":6912,"size":2304,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":6912,"dst_addr":0,"xfer_size":2304},{"start":15114342,"end":15114350,"addr":9216,"size":16,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":9216,"dst_addr":0,"xfer_size":16},{"start":15114350,"end":15128986,"addr":0,"size":58514,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":0,"dst_addr":0,"xfer_size":58514},{"start":15128986,"end":15143622,"addr":58514,"size":58514,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":58514,"dst_addr":0,"xfer_size":58514},{"start":15406938,"end":15421574,"addr":117028,"size":58514,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":117028,"dst_addr":0,"xfer_size":58514},{"start":15684890,"end":15699526,"addr":175542,"size":58514,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":175542,"dst_addr":0,"xfer_size":58514},{"start":15962842,"end":15977478,"addr":234056,"size":58514,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":234056,"dst_addr":0,"xfer_size":58514},{"start":16240794,"end":16255430,"addr":292570,"size":58514,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":292570,"dst_addr":0,"xfer_size":58514},{"start":16518746,"end":16533382,"addr":351084,"size":58514,"kind":"read","core":3,"src_buf":24,"dst_buf":3,"src_addr":351084,"dst_addr":0,"xfer_size":58514},{"start":16240794,"end":16241374,"addr":9472,"size":2304,"kind":"read","core":4,"src_buf":24,"dst_buf":4,"src_addr":9472,"dst_addr":0,"xfer_size":2304},{"start":16241374,"end":16241382,"addr":11776,"size":16,"kind":"read","core":4,"src_buf":24,"dst_buf":4,"src_addr":11776,"dst_addr":0,"xfer_size":16},{"start":17053290,"end":17053678,"addr":12032,"size":1536,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":12032,"dst_addr":0,"xfer_size":1536},{"start":17053678,"end":17053690,"addr":13568,"size":32,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":13568,"dst_addr":0,"xfer_size":32},{"start":17053690,"end":17072894,"addr":0,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":0,"dst_addr":0,"xfer_size":76800},{"start":17072894,"end":17092098,"addr":76800,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":76800,"dst_addr":0,"xfer_size":76800},{"start":17296898,"end":17316102,"addr":153600,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":153600,"dst_addr":0,"xfer_size":76800},{"start":17520902,"end":17540106,"addr":230400,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":230400,"dst_addr":0,"xfer_size":76800},{"start":17744906,"end":17764110,"addr":307200,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":307200,"dst_addr":0,"xfer_size":76800},{"start":17968910,"end":17988114,"addr":384000,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":384000,"dst_addr":0,"xfer_size":76800},{"start":18192914,"end":18212118,"addr":460800,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":460800,"dst_addr":0,"xfer_size":76800},{"start":18416918,"end":18436122,"addr":537600,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":537600,"dst_addr":0,"xfer_size":76800},{"start":18640922,"end":18660126,"addr":614400,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":614400,"dst_addr":0,"xfer_size":76800},{"start":18864926,"end":18884130,"addr":691200,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":691200,"dst_addr":0,"xfer_size":76800},{"start":19088930,"end":19108134,"addr":768000,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":768000,"dst_addr":0,"xfer_size":76800},{"start":19312934,"end":19332138,"addr":844800,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":844800,"dst_addr":0,"xfer_size":76800},{"start":19536938,"end":19556142,"addr":921600,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":921600,"dst_addr":0,"xfer_size":76800},{"start":19760942,"end":19780146,"addr":998400,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":998400,"dst_addr":0,"xfer_size":76800},{"start":19984946,"end":20004150,"addr":1075200,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":1075200,"dst_addr":0,"xfer_size":76800},{"start":20208950,"end":20228154,"addr":1152000,"size":76800,"kind":"read","core":5,"src_buf":24,"dst_buf":5,"src_addr":1152000,"dst_addr":0,"xfer_size":76800},{"start":19984946,"end":19989558,"addr":13824,"size":18432,"kind":"read","core":6,"src_buf":24,"dst_buf":6,"src_addr":13824,"dst_addr":0,"xfer_size":18432},{"start":19989558,"end":19989578,"addr":32256,"size":64,"kind":"read","core":6,"src_buf":24,"dst_buf":6,"src_addr":32256,"dst_addr":0,"xfer_size":64},{"start":22949894,"end":22950922,"addr":32512,"size":4096,"kind":"read","core":7,"src_buf":24,"dst_buf":7,"src_addr":32512,"dst_addr":0,"xfer_size":4096},{"start":22950922,"end":22950942,"addr":36608,"size":64,"kind":"read","core":7,"src_buf":24,"dst_buf":7,"src_addr":36608,"dst_addr":0,"xfer_size":64},{"start":23806758,"end":23809066,"addr":36864,"size":9216,"kind":"read","core":8,"src_buf":24,"dst_buf":8,"src_addr":36864,"dst_addr":0,"xfer_size":9216},{"start":23809066,"end":23809078,"addr":46080,"size":32,"kind":"read","core":8,"src_buf":24,"dst_buf":8,"src_addr":46080,"dst_addr":0,"xfer_size":32},{"start":23809078,"end":23821882,"addr":0,"size":51200,"kind":"read","core":8,"src_buf":24,"dst_buf":8,"src_addr":0,"dst_addr":0,"xfer_size":51200},{"start":23821882,"end":23834686,"addr":51200,"size":51200,"kind":"read","core":8,"src_buf":24,"dst_buf":8,"src_addr":51200,"dst_addr":0,"xfer_size":51200},{"start":24074684,"end":24087488,"addr":102400,"size":51200,"kind":"read","core":8,"src_buf":24,"dst_buf":8,"src_addr":102400,"dst_addr":0,"xfer_size":51200},{"start":24327486,"end":24340290,"addr":153600,"size":51200,"kind":"read","core":8,"src_buf":24,"dst_buf":8,"src_addr":153600,"dst_addr":0,"xfer_size":51200},{"start":24340290,"end":24342598,"addr":46336,"size":9216,"kind":"read","core":9,"src_buf":24,"dst_buf":9,"src_addr":46336,"dst_addr":0,"xfer_size":9216},{"start":24342598,"end":24342610,"addr":55552,"size":32,"kind":"read","core":9,"src_buf":24,"dst_buf":9,"src_addr":55552,"dst_addr":0,"xfer_size":32},{"start":24833090,"end":24835398,"addr":55808,"size":9216,"kind":"read","core":10,"src_buf":24,"dst_buf":-1,"src_addr":55808,"dst_addr":0,"xfer_size":9216},{"start":24835398,"end":24835410,"addr":65024,"size":32,"kind":"read","core":10,"src_buf":24,"dst_buf":-1,"src_addr":65024,"dst_addr":0,"xfer_size":32},{"start":24835410,"end":24848214,"addr":0,"size":51200,"kind":"read","core":10,"src_buf":24,"dst_buf":-1,"src_addr":0,"dst_addr":0,"xfer_size":51200},{"start":24848214,"end":24861018,"addr":51200,"size":51200,"kind":"read","core":10,"src_buf":24,"dst_buf":-1,"src_addr":51200,"dst_addr":0,"xfer_size":51200},{"start":25101016,"end":25113820,"addr":102400,"size":51200,"kind":"read","core":10,"src_buf":24,"dst_buf":-1,"src_addr":102400,"dst_addr":0,"xfer_size":51200},{"start":25353818,"end":25366622,"addr":153600,"size":51200,"kind":"read","core":10,"src_buf":24,"dst_buf":-1,"src_addr":153600,"dst_addr":0,"xfer_size":51200},{"start":25353818,"end":25356126,"addr":65280,"size":9216,"kind":"read","core":11,"src_buf":24,"dst_buf":-1,"src_addr":65280,"dst_addr":0,"xfer_size":9216},{"start":25356126,"end":25356138,"addr":74496,"size":32,"kind":"read","core":11,"src_buf":24,"dst_buf":-1,"src_addr":74496,"dst_addr":0,"xfer_size":32}],"sm_live":[],"sm_locks":[{"start":13589522,"end":26380156,"addr":2314496,"size":63015,"rc":1,"core":2,"closed":false},{"start":13758882,"end":26380156,"addr":2377511,"size":63015,"rc":1,"core":2,"closed":false},{"start":13928242,"end":26380156,"addr":2440526,"size":63015,"rc":1,"core":2,"closed":false},{"start":14097602,"end":26380156,"addr":2503541,"size":63015,"rc":1,"core":2,"closed":false},{"start":14266962,"end":26380156,"addr":2566556,"size":63015,"rc":1,"core":2,"closed":false},{"start":14436322,"end":26380156,"addr":2629571,"size":63015,"rc":1,"core":2,"closed":false},{"start":14605682,"end":26380156,"addr":2692586,"size":63015,"rc":1,"core":2,"closed":false},{"start":14775042,"end":26380156,"addr":2755601,"size":63015,"rc":1,"core":2,"closed":false},{"start":14944402,"end":26380156,"addr":2818616,"size":63015,"rc":1,"core":2,"closed":false},{"start":15113762,"end":26380156,"addr":2881631,"size":63015,"rc":1,"core":2,"closed":false},{"start":15283122,"end":26380156,"addr":2944646,"size":63015,"rc":1,"core":2,"closed":false},{"start":15452482,"end":26380156,"addr":3007661,"size":63015,"rc":1,"core":2,"closed":false},{"start":15621842,"end":26380156,"addr":3070676,"size":63015,"rc":1,"core":2,"closed":false},{"start":16512018,"end":26380156,"addr":3133696,"size":58514,"rc":1,"core":4,"closed":false},{"start":16782654,"end":26380156,"addr":3192210,"size":58514,"rc":1,"core":4,"closed":false},{"start":17053290,"end":26380156,"addr":3250724,"size":58514,"rc":1,"core":4,"closed":false},{"start":17323926,"end":26380156,"addr":3309238,"size":58514,"rc":1,"core":4,"closed":false},{"start":17594562,"end":26380156,"addr":3367752,"size":58514,"rc":1,"core":4,"closed":false},{"start":17865198,"end":26380156,"addr":3426266,"size":58514,"rc":1,"core":4,"closed":false},{"start":18135834,"end":26380156,"addr":3484780,"size":58514,"rc":1,"core":4,"closed":false},{"start":23093578,"end":26380156,"addr":2314496,"size":58514,"rc":1,"core":7,"closed":false},{"start":23236214,"end":26380156,"addr":2373010,"size":58514,"rc":1,"core":7,"closed":false},{"start":23378850,"end":26380156,"addr":2431524,"size":58514,"rc":1,"core":7,"closed":false},{"start":23521486,"end":26380156,"addr":2490038,"size":58514,"rc":1,"core":7,"closed":false},{"start":23664122,"end":26380156,"addr":2548552,"size":58514,"rc":1,"core":7,"closed":false},{"start":23806758,"end":26380156,"addr":2607066,"size":58514,"rc":1,"core":7,"closed":false},{"start":23949394,"end":26380156,"addr":2665580,"size":58514,"rc":1,"core":7,"closed":false},{"start":24598614,"end":26380156,"addr":3133696,"size":51200,"rc":1,"core":9,"closed":false},{"start":24854618,"end":26380156,"addr":3184896,"size":51200,"rc":1,"core":9,"closed":false},{"start":25110622,"end":26380156,"addr":3236096,"size":51200,"rc":1,"core":9,"closed":false},{"start":25366626,"end":26380156,"addr":3287296,"size":51200,"rc":1,"core":9,"closed":false},{"start":25612142,"end":26380156,"addr":3338496,"size":51200,"rc":1,"core":11,"closed":false},{"start":25868146,"end":26380156,"addr":3389696,"size":51200,"rc":1,"core":11,"closed":false},{"start":26124150,"end":26380156,"addr":3440896,"size":51200,"rc":1,"core":11,"closed":false},{"start":26380154,"end":26380156,"addr":3492096,"size":51200,"rc":1,"core":11,"closed":false}],"layer_starts":{"0":[1],"1":[1],"2":[1],"3":[1],"4":[1],"5":[1],"6":[1],"7":[1],"8":[1],"9":[1],"10":[1],"11":[1]},"layer_totals":{"0":1,"1":1,"2":1,"3":1,"4":1,"5":1,"6":1,"7":1,"8":1,"9":1,"10":1,"11":1},"pc_events":{"0":[0,1,14089,303256,592423,881590,1170757,1459924,1749091,2038258,2327425,2616592,2905759,3194926,3484093,3773260,4062427,4351594,4640761,4929928,5219095,5508262,5797429,6086596,6375763,6375763,6375764],"1":[0,1,5509430,6036794,6564158,7091522,7618886,8146250,8673614,9200978,9728342,10255706,10783070,11310434,11837798,12365162,12892526,13419890,13947254,14474618,15001982,15529346,16056710,16056710,16056711],"2":[0,1,13420162,13589522,13758882,13928242,14097602,14266962,14436322,14605682,14775042,14944402,15113762,15283122,15452482,15621842,15621842,15621843],"3":[0,1,15128986,15406938,15684890,15962842,16240794,16518746,16796698,17074650,17074650,17074651],"4":[0,1,16241382,16512018,16782654,17053290,17323926,17594562,17865198,18135834,18135834,18135835],"5":[0,1,17072894,17296898,17520902,17744906,17968910,18192914,18416918,18640922,18864926,19088930,19312934,19536938,19760942,19984946,20208950,20432954,20656958,20656958,20656959],"6":[0,1,19989578,20482964,20976350,21469736,21963122,22456508,22949894,23443280,23936666,24430052,24923438,25416824,25416824,25416825],"7":[0,1,22950942,23093578,23236214,23378850,23521486,23664122,23806758,23949394,23949394,23949395],"8":[0,1,23821882,24074684,24327486,24580288,24833090,24833090,24833091],"9":[0,1,24342610,24598614,24854618,25110622,25366626,25366626,25366627],"10":[0,1,24848214,25101016,25353818,25606620,25859422,25859422,25859423],"11":[0,1,25356138,25612142,25868146,26124150,26380154,26380154,26380155]},"ub_writes":{"0":[{"start":1,"end":113,"addr":0,"size":432,"core":0,"src_buf":24,"src_addr":0},{"start":113,"end":121,"addr":0,"size":16,"core":0,"src_buf":24,"src_addr":512},{"start":121,"end":14089,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2314496},{"start":14089,"end":28057,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2370350},{"start":303256,"end":317224,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2426204},{"start":592423,"end":606391,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2482058},{"start":881590,"end":895558,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2537912},{"start":1170757,"end":1184725,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2593766},{"start":1459924,"end":1473892,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2649620},{"start":1749091,"end":1763059,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2705474},{"start":2038258,"end":2052226,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2761328},{"start":2327425,"end":2341393,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2817182},{"start":2616592,"end":2630560,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2873036},{"start":2905759,"end":2919727,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2928890},{"start":3194926,"end":3208894,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":2984744},{"start":3484093,"end":3498061,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3040598},{"start":3773260,"end":3787228,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3096452},{"start":4062427,"end":4076395,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3152306},{"start":4351594,"end":4365562,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3208160},{"start":4640761,"end":4654729,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3264014},{"start":4929928,"end":4943896,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3319868},{"start":5219095,"end":5233063,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3375722},{"start":5508262,"end":5522230,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3431576},{"start":5797429,"end":5811397,"addr":0,"size":55854,"core":0,"src_buf":24,"src_addr":3487430}],"1":[{"start":289289,"end":303256,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":578456,"end":592423,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":867623,"end":881590,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":1156790,"end":1170757,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":1445957,"end":1459924,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":1735124,"end":1749091,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":2024291,"end":2038258,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":2313458,"end":2327425,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":2602625,"end":2616592,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":2891792,"end":2905759,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":3180959,"end":3194926,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":3470126,"end":3484093,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":3759293,"end":3773260,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":4048460,"end":4062427,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":4337627,"end":4351594,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":4626794,"end":4640761,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":4915961,"end":4929928,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":5205128,"end":5219095,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":5494295,"end":5508262,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":5783462,"end":5797429,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":6072629,"end":6086596,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":6361796,"end":6375763,"addr":0,"size":74472,"core":0,"src_buf":0,"src_addr":0},{"start":5508262,"end":5509418,"addr":0,"size":4608,"core":1,"src_buf":24,"src_addr":768},{"start":5509418,"end":5509430,"addr":0,"size":32,"core":1,"src_buf":24,"src_addr":5376}],"2":[{"start":6021430,"end":6036794,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":6548794,"end":6564158,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":7076158,"end":7091522,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":7603522,"end":7618886,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":8130886,"end":8146250,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":8658250,"end":8673614,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":9185614,"end":9200978,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":9712978,"end":9728342,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":10240342,"end":10255706,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":10767706,"end":10783070,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":11295070,"end":11310434,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":11822434,"end":11837798,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":12349798,"end":12365162,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":12877162,"end":12892526,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":13404526,"end":13419890,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":13931890,"end":13947254,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":14459254,"end":14474618,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":14986618,"end":15001982,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":15513982,"end":15529346,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":16041346,"end":16056710,"addr":0,"size":40960,"core":1,"src_buf":1,"src_addr":0},{"start":13419890,"end":13420150,"addr":0,"size":1024,"core":2,"src_buf":24,"src_addr":5632},{"start":13420150,"end":13420162,"addr":0,"size":32,"core":2,"src_buf":24,"src_addr":6656}],"3":[{"start":15113762,"end":15114342,"addr":0,"size":2304,"core":3,"src_buf":24,"src_addr":6912},{"start":15114342,"end":15114350,"addr":0,"size":16,"core":3,"src_buf":24,"src_addr":9216},{"start":15114350,"end":15128986,"addr":0,"size":58514,"core":3,"src_buf":24,"src_addr":0},{"start":15128986,"end":15143622,"addr":0,"size":58514,"core":3,"src_buf":24,"src_addr":58514},{"start":15406938,"end":15421574,"addr":0,"size":58514,"core":3,"src_buf":24,"src_addr":117028},{"start":15684890,"end":15699526,"addr":0,"size":58514,"core":3,"src_buf":24,"src_addr":175542},{"start":15962842,"end":15977478,"addr":0,"size":58514,"core":3,"src_buf":24,"src_addr":234056},{"start":16240794,"end":16255430,"addr":0,"size":58514,"core":3,"src_buf":24,"src_addr":292570},{"start":16518746,"end":16533382,"addr":0,"size":58514,"core":3,"src_buf":24,"src_addr":351084}],"4":[{"start":15384986,"end":15406938,"addr":0,"size":58514,"core":3,"src_buf":3,"src_addr":0},{"start":15662938,"end":15684890,"addr":0,"size":58514,"core":3,"src_buf":3,"src_addr":0},{"start":15940890,"end":15962842,"addr":0,"size":58514,"core":3,"src_buf":3,"src_addr":0},{"start":16218842,"end":16240794,"addr":0,"size":58514,"core":3,"src_buf":3,"src_addr":0},{"start":16496794,"end":16518746,"addr":0,"size":58514,"core":3,"src_buf":3,"src_addr":0},{"start":16774746,"end":16796698,"addr":0,"size":58514,"core":3,"src_buf":3,"src_addr":0},{"start":17052698,"end":17074650,"addr":0,"size":58514,"core":3,"src_buf":3,"src_addr":0},{"start":16240794,"end":16241374,"addr":0,"size":2304,"core":4,"src_buf":24,"src_addr":9472},{"start":16241374,"end":16241382,"addr":0,"size":16,"core":4,"src_buf":24,"src_addr":11776}],"5":[{"start":17053290,"end":17053678,"addr":0,"size":1536,"core":5,"src_buf":24,"src_addr":12032},{"start":17053678,"end":17053690,"addr":0,"size":32,"core":5,"src_buf":24,"src_addr":13568},{"start":17053690,"end":17072894,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":0},{"start":17072894,"end":17092098,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":76800},{"start":17296898,"end":17316102,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":153600},{"start":17520902,"end":17540106,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":230400},{"start":17744906,"end":17764110,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":307200},{"start":17968910,"end":17988114,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":384000},{"start":18192914,"end":18212118,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":460800},{"start":18416918,"end":18436122,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":537600},{"start":18640922,"end":18660126,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":614400},{"start":18864926,"end":18884130,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":691200},{"start":19088930,"end":19108134,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":768000},{"start":19312934,"end":19332138,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":844800},{"start":19536938,"end":19556142,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":921600},{"start":19760942,"end":19780146,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":998400},{"start":19984946,"end":20004150,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":1075200},{"start":20208950,"end":20228154,"addr":0,"size":76800,"core":5,"src_buf":24,"src_addr":1152000}],"6":[{"start":17277694,"end":17296898,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":17501698,"end":17520902,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":17725702,"end":17744906,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":17949706,"end":17968910,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":18173710,"end":18192914,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":18397714,"end":18416918,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":18621718,"end":18640922,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":18845722,"end":18864926,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":19069726,"end":19088930,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":19293730,"end":19312934,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":19517734,"end":19536938,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":19741738,"end":19760942,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":19965742,"end":19984946,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":20189746,"end":20208950,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":20413750,"end":20432954,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":20637754,"end":20656958,"addr":0,"size":51200,"core":5,"src_buf":5,"src_addr":0},{"start":19984946,"end":19989558,"addr":0,"size":18432,"core":6,"src_buf":24,"src_addr":13824},{"start":19989558,"end":19989578,"addr":0,"size":64,"core":6,"src_buf":24,"src_addr":32256}],"7":[{"start":20475978,"end":20482964,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":20969364,"end":20976350,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":21462750,"end":21469736,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":21956136,"end":21963122,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":22449522,"end":22456508,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":22942908,"end":22949894,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":23436294,"end":23443280,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":23929680,"end":23936666,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":24423066,"end":24430052,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":24916452,"end":24923438,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":25409838,"end":25416824,"addr":0,"size":37236,"core":6,"src_buf":6,"src_addr":0},{"start":22949894,"end":22950922,"addr":0,"size":4096,"core":7,"src_buf":24,"src_addr":32512},{"start":22950922,"end":22950942,"addr":0,"size":64,"core":7,"src_buf":24,"src_addr":36608}],"8":[{"start":23806758,"end":23809066,"addr":0,"size":9216,"core":8,"src_buf":24,"src_addr":36864},{"start":23809066,"end":23809078,"addr":0,"size":32,"core":8,"src_buf":24,"src_addr":46080},{"start":23809078,"end":23821882,"addr":0,"size":51200,"core":8,"src_buf":24,"src_addr":0},{"start":23821882,"end":23834686,"addr":0,"size":51200,"core":8,"src_buf":24,"src_addr":51200},{"start":24074684,"end":24087488,"addr":0,"size":51200,"core":8,"src_buf":24,"src_addr":102400},{"start":24327486,"end":24340290,"addr":0,"size":51200,"core":8,"src_buf":24,"src_addr":153600}],"9":[{"start":24065082,"end":24074684,"addr":0,"size":51200,"core":8,"src_buf":8,"src_addr":0},{"start":24317884,"end":24327486,"addr":0,"size":51200,"core":8,"src_buf":8,"src_addr":0},{"start":24570686,"end":24580288,"addr":0,"size":51200,"core":8,"src_buf":8,"src_addr":0},{"start":24823488,"end":24833090,"addr":0,"size":51200,"core":8,"src_buf":8,"src_addr":0},{"start":24340290,"end":24342598,"addr":0,"size":9216,"core":9,"src_buf":24,"src_addr":46336},{"start":24342598,"end":24342610,"addr":0,"size":32,"core":9,"src_buf":24,"src_addr":55552}],"10":[],"11":[],"12":[],"13":[],"14":[],"15":[],"16":[],"17":[],"18":[{"start":13573762,"end":13589522,"addr":2314496,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":13743122,"end":13758882,"addr":2377511,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":13912482,"end":13928242,"addr":2440526,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":14081842,"end":14097602,"addr":2503541,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":14251202,"end":14266962,"addr":2566556,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":14420562,"end":14436322,"addr":2629571,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":14589922,"end":14605682,"addr":2692586,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":14759282,"end":14775042,"addr":2755601,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":14928642,"end":14944402,"addr":2818616,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":15098002,"end":15113762,"addr":2881631,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":15267362,"end":15283122,"addr":2944646,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":15436722,"end":15452482,"addr":3007661,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":15606082,"end":15621842,"addr":3070676,"size":63015,"core":2,"src_buf":2,"src_addr":0},{"start":16497382,"end":16512018,"addr":3133696,"size":58514,"core":4,"src_buf":4,"src_addr":0},{"start":16768018,"end":16782654,"addr":3192210,"size":58514,"core":4,"src_buf":4,"src_addr":0},{"start":17038654,"end":17053290,"addr":3250724,"size":58514,"core":4,"src_buf":4,"src_addr":0},{"start":17309290,"end":17323926,"addr":3309238,"size":58514,"core":4,"src_buf":4,"src_addr":0},{"start":17579926,"end":17594562,"addr":3367752,"size":58514,"core":4,"src_buf":4,"src_addr":0},{"start":17850562,"end":17865198,"addr":3426266,"size":58514,"core":4,"src_buf":4,"src_addr":0},{"start":18121198,"end":18135834,"addr":3484780,"size":58514,"core":4,"src_buf":4,"src_addr":0},{"start":23078942,"end":23093578,"addr":2314496,"size":58514,"core":7,"src_buf":7,"src_addr":0},{"start":23221578,"end":23236214,"addr":2373010,"size":58514,"core":7,"src_buf":7,"src_addr":0},{"start":23364214,"end":23378850,"addr":2431524,"size":58514,"core":7,"src_buf":7,"src_addr":0},{"start":23506850,"end":23521486,"addr":2490038,"size":58514,"core":7,"src_buf":7,"src_addr":0},{"start":23649486,"end":23664122,"addr":2548552,"size":58514,"core":7,"src_buf":7,"src_addr":0},{"start":23792122,"end":23806758,"addr":2607066,"size":58514,"core":7,"src_buf":7,"src_addr":0},{"start":23934758,"end":23949394,"addr":2665580,"size":58514,"core":7,"src_buf":7,"src_addr":0},{"start":24585810,"end":24598614,"addr":3133696,"size":51200,"core":9,"src_buf":9,"src_addr":0},{"start":24841814,"end":24854618,"addr":3184896,"size":51200,"core":9,"src_buf":9,"src_addr":0},{"start":25097818,"end":25110622,"addr":3236096,"size":51200,"core":9,"src_buf":9,"src_addr":0},{"start":25353822,"end":25366626,"addr":3287296,"size":51200,"core":9,"src_buf":9,"src_addr":0},{"start":25599338,"end":25612142,"addr":3338496,"size":51200,"core":11,"src_buf":11,"src_addr":0},{"start":25855342,"end":25868146,"addr":3389696,"size":51200,"core":11,"src_buf":11,"src_addr":0},{"start":26111346,"end":26124150,"addr":3440896,"size":51200,"core":11,"src_buf":11,"src_addr":0},{"start":26367350,"end":26380154,"addr":3492096,"size":51200,"core":11,"src_buf":11,"src_addr":0}],"19":[],"20":[],"21":[],"22":[],"23":[]},"ub_size":262144,"queue_records":{"0":94,"1":90,"2":81,"3":67,"4":73,"5":74,"6":63,"7":68,"8":64,"9":67,"10":53,"11":54},"opcode_names":{"0":"NOP","1":"Conv","2":"Gemm","3":"Attention","4":"Concat","6":"Head","16":"Add","17":"Mul","18":"Sigmoid","19":"MaxPool","20":"Resize","21":"TopK","22":"Transpose","23":"Gather","24":"Copy","28":"Softmax"},"opcode_colors":{"1":"#4a90e2","2":"#50c9c3","3":"#8e6fd6","4":"#2e86ab","6":"#34495e","16":"#56c596","17":"#48a999","18":"#7bb3d9","19":"#9b7ebd","20":"#5ca4cf","21":"#6b5b95","22":"#3e92cc","23":"#87c5b4","24":"#a8c7e2","28":"#16a085"},"buffer_names":{"0":"P0_UB","1":"P1_UB","2":"P2_UB","3":"P3_UB","4":"P4_UB","5":"P5_UB","6":"P6_UB","7":"P7_UB","8":"P8_UB","9":"P9_UB","10":"P10_UB","11":"P11_UB","12":"A0_UB","13":"A1_UB","14":"A2_UB","15":"A3_UB","16":"A4_UB","17":"A5_UB","18":"A6_UB","19":"A7_UB","20":"A8_UB","21":"A9_UB","22":"A10_UB","23":"A11_UB","24":"SM","25":"SELF","26":"PAIR","27":"PREV","28":"NEXT","31":"DUMMY"},"wait_color":"#e74c3c","stats":{"total_compute":119,"total_dma":196,"total_cycles":26380156,"total_time_us":32975.195}};
+document.getElementById('src').textContent = "yolov10n_step1.sim.csv";
+const s = DATA.stats;
+document.getElementById('statsline').textContent =
+  s.total_compute + ' compute · ' + s.total_dma + ' dma · cycles ' +
+  s.total_cycles.toLocaleString() + ' · ' + s.total_time_us.toFixed(2) + ' us @ ' +
+  DATA.clock_mhz + ' MHz';
+
+const OPCODE_COLORS = DATA.opcode_colors;
+const OPCODE_NAMES  = DATA.opcode_names;
+const BUFFER_NAMES  = DATA.buffer_names;
+const WAIT_COLOR    = DATA.wait_color;
+
+const MARGIN = {l: 70, r: 20, t: 20, b: 30};
+function computeWidth() {
+  const tl = document.getElementById('timelines');
+  const w = tl ? tl.clientWidth : (window.innerWidth - 380);
+  return Math.max(800, w - 32);
+}
+let W_TOTAL = computeWidth();
+
+// Cursor state (shared across panels)
+let cursorCycle = 0;
+let cursorPinned = false;
+const ROW_H_CORE = 22;
+const ROW_H_DMA  = 18;
+const H_SM       = 300;
+const NUM_CORES  = 12;
+const NUM_BUSES  = 6;
+
+let viewStart = 0;
+let viewEnd   = DATA.end_cycle;
+
+function cycleToX(cyc, panelW) {
+  return MARGIN.l + (cyc - viewStart) / (viewEnd - viewStart) * (panelW - MARGIN.l - MARGIN.r);
+}
+function panelInnerW(panelW) { return panelW - MARGIN.l - MARGIN.r; }
+
+// --- tooltip ---
+const tip = document.getElementById('tooltip');
+function showTip(html, ev) {
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  tip.style.left = (ev.clientX + 14) + 'px';
+  tip.style.top  = (ev.clientY + 14) + 'px';
+}
+function hideTip() { tip.style.display = 'none'; }
+
+function bufLabel(buf, addr) {
+  const name = BUFFER_NAMES[buf] || ('BUF' + buf);
+  return name + '[0x' + addr.toString(16) + ']';
+}
+
+// --- legend for core compute ---
+const legend = document.getElementById('legendCompute');
+for (const [op, color] of Object.entries(OPCODE_COLORS)) {
+  const name = OPCODE_NAMES[op] || ('op' + op);
+  const sp = document.createElement('span');
+  sp.innerHTML = '<span class="sw" style="background:' + color + '"></span>' + name;
+  legend.appendChild(sp);
+}
+const sp2 = document.createElement('span');
+sp2.innerHTML = '<span class="sw" style="background:' + WAIT_COLOR + '"></span>waiting';
+legend.appendChild(sp2);
+
+// --- rendering ---
+function clearSvg(id) {
+  const s = document.getElementById(id);
+  while (s.firstChild) s.removeChild(s.firstChild);
+  return s;
+}
+function svgEl(tag, attrs) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+function renderAxis(svg, panelW, yBottom) {
+  const axis = svgEl('g', {class: 'axis'});
+  const line = svgEl('line', {
+    x1: MARGIN.l, y1: yBottom, x2: panelW - MARGIN.r, y2: yBottom
+  });
+  axis.appendChild(line);
+  const nTicks = 10;
+  for (let i = 0; i <= nTicks; i++) {
+    const cyc = viewStart + (viewEnd - viewStart) * i / nTicks;
+    const x = cycleToX(cyc, panelW);
+    const tk = svgEl('line', {x1: x, y1: yBottom, x2: x, y2: yBottom + 4});
+    axis.appendChild(tk);
+    const tx = svgEl('text', {x: x, y: yBottom + 16, 'text-anchor': 'middle'});
+    tx.textContent = Math.round(cyc).toLocaleString();
+    axis.appendChild(tx);
+  }
+  svg.appendChild(axis);
+}
+
+// --- Core compute panel ---
+function renderCore() {
+  const svg = clearSvg('svgCore');
+  const panelW = W_TOTAL;
+  const h = MARGIN.t + NUM_CORES * ROW_H_CORE + MARGIN.b;
+  svg.setAttribute('width', panelW);
+  svg.setAttribute('height', h);
+
+  for (let c = 0; c < NUM_CORES; c++) {
+    const y = MARGIN.t + c * ROW_H_CORE;
+    svg.appendChild(svgEl('rect', {
+      class: 'row-bg', x: MARGIN.l, y: y, width: panelW - MARGIN.l - MARGIN.r,
+      height: ROW_H_CORE - 2
+    }));
+    const lbl = svgEl('text', {
+      class: 'row-label', x: MARGIN.l - 6, y: y + ROW_H_CORE / 2 + 3,
+      'text-anchor': 'end'
+    });
+    lbl.textContent = 'pcore_' + c;
+    svg.appendChild(lbl);
+
+    const blocks = DATA.cores[c] || [];
+    for (const b of blocks) {
+      const x1 = cycleToX(b.s, panelW);
+      const x2 = cycleToX(b.e, panelW);
+      const w = Math.max(0.5, x2 - x1);
+      if (x2 < MARGIN.l || x1 > panelW - MARGIN.r) continue;
+      const color = b.t === 'c'
+        ? (OPCODE_COLORS[b.op] || '#95a5a6')
+        : WAIT_COLOR;
+      const r = svgEl('rect', {
+        class: 'block', x: x1, y: y + 2, width: w, height: ROW_H_CORE - 6, fill: color
+      });
+      const info = (b.t === 'c')
+        ? ('pcore_' + c + '\nop: ' + (b.label || OPCODE_NAMES[b.op]) +
+           '\ncycles: ' + b.s.toLocaleString() + ' → ' + b.e.toLocaleString() +
+           ' (' + (b.e - b.s).toLocaleString() + ')')
+        : ('pcore_' + c + '\nWAITING\ncycles: ' + b.s.toLocaleString() + ' → ' +
+           b.e.toLocaleString() + ' (' + (b.e - b.s).toLocaleString() + ')');
+      r.addEventListener('mouseenter', (e) => showTip(info, e));
+      r.addEventListener('mousemove', (e) => showTip(info, e));
+      r.addEventListener('mouseleave', hideTip);
+      svg.appendChild(r);
+    }
+  }
+  renderAxis(svg, panelW, MARGIN.t + NUM_CORES * ROW_H_CORE + 4);
+  attachPanHandlers(svg, panelW);
+}
+
+// --- DMA panel ---
+function renderDma() {
+  const svg = clearSvg('svgDma');
+  const panelW = W_TOTAL;
+  const h = MARGIN.t + NUM_BUSES * ROW_H_DMA + MARGIN.b;
+  svg.setAttribute('width', panelW);
+  svg.setAttribute('height', h);
+
+  for (let b = 0; b < NUM_BUSES; b++) {
+    const y = MARGIN.t + b * ROW_H_DMA;
+    svg.appendChild(svgEl('rect', {
+      class: 'row-bg', x: MARGIN.l, y: y, width: panelW - MARGIN.l - MARGIN.r,
+      height: ROW_H_DMA - 2
+    }));
+    const lbl = svgEl('text', {
+      class: 'row-label', x: MARGIN.l - 6, y: y + ROW_H_DMA / 2 + 3,
+      'text-anchor': 'end'
+    });
+    lbl.textContent = 'bus#' + b;
+    svg.appendChild(lbl);
+
+    const recs = DATA.dma_per_bus[b] || [];
+    for (const d of recs) {
+      const x1 = cycleToX(d.start, panelW);
+      const x2 = cycleToX(d.end, panelW);
+      const w = Math.max(0.5, x2 - x1);
+      if (x2 < MARGIN.l || x1 > panelW - MARGIN.r) continue;
+      const color = d.prefetch ? '#f4d03f' : '#5dade2';
+      const r = svgEl('rect', {
+        class: 'block', x: x1, y: y + 2, width: w, height: ROW_H_DMA - 6, fill: color
+      });
+      const info = 'bus#' + d.bus + (d.prefetch ? ' (prefetch)' : '') +
+        '\nrequested by: pcore_' + d.core +
+        '\nsrc: ' + bufLabel(d.src_buf, d.src_addr) +
+        '\ndst: ' + bufLabel(d.dst_buf, d.dst_addr) +
+        '\nsize: ' + d.size.toLocaleString() + ' B' +
+        '\ncycles: ' + d.start.toLocaleString() + ' → ' + d.end.toLocaleString() +
+        ' (' + (d.end - d.start).toLocaleString() + ')';
+      r.addEventListener('mouseenter', (e) => showTip(info, e));
+      r.addEventListener('mousemove', (e) => showTip(info, e));
+      r.addEventListener('mouseleave', hideTip);
+      svg.appendChild(r);
+    }
+  }
+  renderAxis(svg, panelW, MARGIN.t + NUM_BUSES * ROW_H_DMA + 4);
+  attachPanHandlers(svg, panelW);
+}
+
+// --- SM panel ---
+function renderSm() {
+  const svg = clearSvg('svgSm');
+  const panelW = W_TOTAL;
+  const h = MARGIN.t + H_SM + MARGIN.b;
+  svg.setAttribute('width', panelW);
+  svg.setAttribute('height', h);
+
+  const smMax = DATA.sm_size;
+  function addrToY(addr) {
+    return MARGIN.t + (addr / smMax) * H_SM;
+  }
+
+  // background regions from json
+  const regions = DATA.sm_regions || {};
+  const regMap = {
+    metadata: 'sm-meta', input: 'sm-input',
+    output: 'sm-output', forbidden: 'sm-forbidden'
+  };
+  for (const k in regions) {
+    const r = regions[k];
+    if (!r || !r.size) continue;
+    const y1 = addrToY(r.address);
+    const y2 = addrToY(r.address + r.size);
+    svg.appendChild(svgEl('rect', {
+      class: 'sm-region ' + (regMap[k] || ''),
+      x: MARGIN.l, y: y1, width: panelW - MARGIN.l - MARGIN.r,
+      height: Math.max(1, y2 - y1)
+    }));
+    const lbl = svgEl('text', {
+      class: 'row-label', x: MARGIN.l - 6, y: y1 + 10, 'text-anchor': 'end'
+    });
+    lbl.textContent = k;
+    svg.appendChild(lbl);
+  }
+
+  // axis labels for address
+  const axis = svgEl('g', {class: 'axis'});
+  for (let i = 0; i <= 4; i++) {
+    const a = smMax * i / 4;
+    const y = addrToY(a);
+    const tx = svgEl('text', {
+      x: MARGIN.l - 40, y: y + 3, 'text-anchor': 'end'
+    });
+    tx.textContent = '0x' + Math.round(a).toString(16);
+    axis.appendChild(tx);
+    axis.appendChild(svgEl('line', {
+      x1: MARGIN.l, y1: y, x2: panelW - MARGIN.r, y2: y,
+      stroke: '#e5e5e5'
+    }));
+  }
+  svg.appendChild(axis);
+
+  // SM live residency overlay (drawn before active accesses)
+  for (const L of DATA.sm_live || []) {
+    const x1 = cycleToX(L.start, panelW);
+    const x2 = cycleToX(L.end, panelW);
+    const w = Math.max(1, x2 - x1);
+    if (x2 < MARGIN.l || x1 > panelW - MARGIN.r) continue;
+    const y1 = addrToY(L.addr);
+    const y2 = addrToY(L.addr + L.size);
+    const hBar = Math.max(1, y2 - y1);
+    // Amber tint for data still resident; fades if no reader ever consumes
+    const color = L.has_reader ? 'rgba(241,196,15,.22)' : 'rgba(189,195,199,.25)';
+    const r = svgEl('rect', {
+      x: x1, y: y1, width: w, height: hBar, fill: color,
+      stroke: L.has_reader ? 'rgba(212,172,13,.5)' : 'rgba(127,140,141,.5)',
+      'stroke-width': .3, 'stroke-dasharray': '2 2'
+    });
+    const info = 'SM LIVE (data resident)' +
+      '\nowner write: pcore_' + L.core +
+      '\naddr: 0x' + L.addr.toString(16) + ' +' + L.size.toLocaleString() + 'B' +
+      '\nresident: cycles ' + L.start.toLocaleString() + ' → ' + L.end.toLocaleString() +
+      ' (' + (L.end - L.start).toLocaleString() + ')' +
+      (L.has_reader ? '' : '\n(no later read observed — extends to sim end)');
+    r.addEventListener('mouseenter', (e) => showTip(info, e));
+    r.addEventListener('mousemove', (e) => showTip(info, e));
+    r.addEventListener('mouseleave', hideTip);
+    svg.appendChild(r);
+  }
+
+  // SM locks (refcount-based, drawn after live overlay, before active accesses)
+  for (const L of DATA.sm_locks || []) {
+    const x1 = cycleToX(L.start, panelW);
+    const x2 = cycleToX(L.end, panelW);
+    const w = Math.max(1, x2 - x1);
+    if (x2 < MARGIN.l || x1 > panelW - MARGIN.r) continue;
+    const y1 = addrToY(L.addr);
+    const y2 = addrToY(L.addr + L.size);
+    const hBar = Math.max(1, y2 - y1);
+    const fill = L.closed ? 'rgba(231,76,60,.18)' : 'rgba(231,76,60,.10)';
+    const stroke = 'rgba(192,57,43,.7)';
+    const r = svgEl('rect', {
+      x: x1, y: y1, width: w, height: hBar, fill: fill,
+      stroke: stroke, 'stroke-width': .6
+    });
+    const info = 'SM LOCK (write-locked)' +
+      '\nowner write: pcore_' + L.core +
+      '\naddr: 0x' + L.addr.toString(16) + ' +' + L.size.toLocaleString() + 'B' +
+      '\nrc: ' + L.rc +
+      '\nlocked: cycles ' + L.start.toLocaleString() + ' → ' + L.end.toLocaleString() +
+      ' (' + (L.end - L.start).toLocaleString() + ')' +
+      (L.closed ? '' : '\n(no UNLOCK observed — extends to sim end)');
+    r.addEventListener('mouseenter', (e) => showTip(info, e));
+    r.addEventListener('mousemove', (e) => showTip(info, e));
+    r.addEventListener('mouseleave', hideTip);
+    svg.appendChild(r);
+  }
+
+  // SM accesses
+  for (const a of DATA.sm_accesses) {
+    const x1 = cycleToX(a.start, panelW);
+    const x2 = cycleToX(a.end, panelW);
+    const w = Math.max(1, x2 - x1);
+    if (x2 < MARGIN.l || x1 > panelW - MARGIN.r) continue;
+    const y1 = addrToY(a.addr);
+    const y2 = addrToY(a.addr + a.size);
+    const hBar = Math.max(1, y2 - y1);
+    const color = a.kind === 'write' ? 'rgba(46,204,113,.6)' : 'rgba(52,152,219,.5)';
+    const stroke = a.kind === 'write' ? '#27ae60' : '#2980b9';
+    const r = svgEl('rect', {
+      x: x1, y: y1, width: w, height: hBar, fill: color, stroke: stroke, 'stroke-width': .4
+    });
+    const info = 'SM ' + a.kind.toUpperCase() +
+      '\nrequested by: pcore_' + a.core +
+      '\nsrc: ' + bufLabel(a.src_buf, a.src_addr) +
+      '\ndst: ' + bufLabel(a.dst_buf, a.dst_addr) +
+      '\nsize: ' + a.xfer_size.toLocaleString() + ' B' +
+      '\ncycles: ' + a.start.toLocaleString() + ' → ' + a.end.toLocaleString();
+    r.addEventListener('mouseenter', (e) => showTip(info, e));
+    r.addEventListener('mousemove', (e) => showTip(info, e));
+    r.addEventListener('mouseleave', hideTip);
+    svg.appendChild(r);
+  }
+
+  // time axis at bottom
+  renderAxis(svg, panelW, MARGIN.t + H_SM + 4);
+  attachPanHandlers(svg, panelW);
+}
+
+// --- Cursor → state panel ---
+function cycleToTimeUs(cyc) { return cyc * (1000.0 / DATA.clock_mhz) / 1000.0; }
+
+function findActiveBlock(blocks, cyc) {
+  // linear search — blocks are sorted
+  for (const b of blocks) {
+    if (b.s <= cyc && cyc < b.e) return b;
+    if (b.s > cyc) break;
+  }
+  return null;
+}
+function findActiveDma(dmas, cyc) {
+  for (const d of dmas) {
+    if (d.start <= cyc && cyc < d.end) return d;
+  }
+  return null;
+}
+function findActiveSmAccess(accs, cyc) {
+  const results = [];
+  for (const a of accs) {
+    if (a.start <= cyc && cyc < a.end) results.push(a);
+  }
+  return results;
+}
+
+function updateStatePanel() {
+  const ri = document.getElementById('spCycle');
+  ri.textContent = Math.round(cursorCycle).toLocaleString();
+  document.getElementById('spMode').textContent = cursorPinned ? '(pinned)' : '(live)';
+  document.getElementById('spTime').textContent =
+    cycleToTimeUs(cursorCycle).toFixed(3) + ' μs @ ' + DATA.clock_mhz + ' MHz';
+
+  // Core states (with layer progress + UB usage)
+  const coreTb = document.querySelector('#spCores tbody');
+  coreTb.innerHTML = '';
+  const ubSize = DATA.ub_size || 262144;
+  for (let c = 0; c < 12; c++) {
+    const blocks = DATA.cores[c] || [];
+    const b = findActiveBlock(blocks, cursorCycle);
+    // Layer progress
+    const lstarts = (DATA.layer_starts && DATA.layer_starts[c]) || [];
+    let layerIdx = 0;
+    for (const lc of lstarts) { if (lc <= cursorCycle) layerIdx++; else break; }
+    const layerTotal = (DATA.layer_totals && DATA.layer_totals[c]) || lstarts.length;
+    // UB usage: write events to this core's UB, summed dst_addr+size, only those still resident
+    const ubW = (DATA.ub_writes && DATA.ub_writes[c]) || [];
+    let ubMaxAddr = 0;
+    for (const w of ubW) {
+      if (w.end > cursorCycle) continue;
+      if (w.addr + w.size > ubMaxAddr) ubMaxAddr = w.addr + w.size;
+    }
+    const ubPct = Math.min(100, Math.round(100 * ubMaxAddr / ubSize));
+
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td');
+    td1.className = 'st-key';
+    td1.textContent = 'pcore_' + c;
+    let td2 = document.createElement('td');
+    let stateHtml;
+    if (!b) {
+      td2.className = 'st-idle';
+      stateHtml = '— idle';
+    } else if (b.t === 'c') {
+      const op = OPCODE_NAMES[b.op] || ('op' + b.op);
+      const color = OPCODE_COLORS[b.op] || '#95a5a6';
+      const remain = b.e - cursorCycle;
+      td2.className = 'st-active';
+      stateHtml = '<span class="pill" style="background:' + color + '"></span>' +
+                  op + ' · ' + remain.toLocaleString() + 'c';
+    } else {
+      td2.className = 'st-wait';
+      const remain = b.e - cursorCycle;
+      stateHtml = '<span class="pill" style="background:' + WAIT_COLOR + '"></span>WAIT · ' +
+                  remain.toLocaleString() + 'c';
+    }
+    // PC position: count PC-advancing events at or before cursor
+    const pcEv = (DATA.pc_events && DATA.pc_events[c]) || [];
+    let pcIdx = 0;
+    for (const t of pcEv) { if (t <= cursorCycle) pcIdx++; else break; }
+    const qTotal = (DATA.queue_records && DATA.queue_records[c]) || 0;
+    // Append progress info as compact second line
+    const progLine = '<div style="font-size:9px;color:#7f8c8d;margin-top:1px">' +
+      'Q ' + pcIdx + '/' + qTotal + ' · L ' + layerIdx + '/' + layerTotal + ' · UB ' + ubPct + '%' +
+      '<span style="display:inline-block;width:32px;height:5px;background:#ecf0f1;' +
+      'vertical-align:middle;margin-left:4px;border:1px solid #bdc3c7"><span style="display:block;' +
+      'height:100%;width:' + ubPct + '%;background:#3498db"></span></span></div>';
+    td2.innerHTML = stateHtml + progLine;
+    tr.appendChild(td1); tr.appendChild(td2);
+    coreTb.appendChild(tr);
+  }
+
+  // Bus states
+  const busTb = document.querySelector('#spBuses tbody');
+  busTb.innerHTML = '';
+  for (let b = 0; b < 6; b++) {
+    const dmas = DATA.dma_per_bus[b] || [];
+    const d = findActiveDma(dmas, cursorCycle);
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td');
+    td1.className = 'st-key';
+    td1.textContent = 'bus#' + b;
+    const td2 = document.createElement('td');
+    if (!d) {
+      td2.className = 'st-idle';
+      td2.textContent = '— idle';
+    } else {
+      const color = d.prefetch ? '#f4d03f' : '#5dade2';
+      td2.className = 'st-active';
+      td2.innerHTML = '<span class="pill" style="background:' + color + '"></span>' +
+        'p' + d.core + ' ' +
+        (BUFFER_NAMES[d.src_buf] || ('b' + d.src_buf)) + '→' +
+        (BUFFER_NAMES[d.dst_buf] || ('b' + d.dst_buf)) +
+        ' ' + d.size.toLocaleString() + 'B';
+    }
+    tr.appendChild(td1); tr.appendChild(td2);
+    busTb.appendChild(tr);
+  }
+
+  // SM live residency
+  const liveTb = document.querySelector('#spLive tbody');
+  liveTb.innerHTML = '';
+  const liveNow = (DATA.sm_live || []).filter(L => L.start <= cursorCycle && cursorCycle < L.end);
+  let liveBytes = 0;
+  for (const L of liveNow) liveBytes += L.size;
+  document.getElementById('spLiveSummary').textContent =
+    liveNow.length + ' regions · ' + liveBytes.toLocaleString() + ' B resident';
+  // Show top 5 largest
+  const sorted = liveNow.slice().sort((a,b) => b.size - a.size).slice(0, 5);
+  for (const L of sorted) {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td');
+    td1.className = 'st-key';
+    td1.textContent = '0x' + L.addr.toString(16);
+    const td2 = document.createElement('td');
+    td2.className = 'st-active';
+    const color = L.has_reader ? '#f1c40f' : '#bdc3c7';
+    td2.innerHTML = '<span class="pill" style="background:' + color + ';opacity:.7"></span>' +
+      L.size.toLocaleString() + 'B · p' + L.core;
+    tr.appendChild(td1); tr.appendChild(td2);
+    liveTb.appendChild(tr);
+  }
+  if (liveNow.length > 5) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 2; td.className = 'st-idle';
+    td.textContent = '… +' + (liveNow.length - 5) + ' more';
+    tr.appendChild(td); liveTb.appendChild(tr);
+  }
+
+  // SM activity
+  const smTb = document.querySelector('#spSm tbody');
+  smTb.innerHTML = '';
+  const active = findActiveSmAccess(DATA.sm_accesses, cursorCycle);
+  if (active.length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 2;
+    td.className = 'st-idle';
+    td.textContent = '— no SM transfer';
+    tr.appendChild(td); smTb.appendChild(tr);
+  } else {
+    for (const a of active) {
+      const tr = document.createElement('tr');
+      const td1 = document.createElement('td');
+      td1.className = 'st-key';
+      td1.textContent = a.kind.toUpperCase();
+      const td2 = document.createElement('td');
+      td2.className = 'st-active';
+      const color = a.kind === 'write' ? '#2ecc71' : '#3498db';
+      td2.innerHTML = '<span class="pill" style="background:' + color + '"></span>' +
+        'p' + a.core + ' 0x' + a.addr.toString(16) + ' +' + a.xfer_size.toLocaleString() + 'B';
+      tr.appendChild(td1); tr.appendChild(td2);
+      smTb.appendChild(tr);
+    }
+  }
+}
+
+function setCursor(cyc, pin) {
+  cursorCycle = Math.max(0, Math.min(DATA.end_cycle, cyc));
+  if (pin !== undefined) cursorPinned = pin;
+  document.getElementById('pinBtn').textContent = cursorPinned ? '📌 Unpin' : '📌 Pin';
+  drawPlayheads();
+  updateStatePanel();
+}
+
+function togglePin() { cursorPinned = !cursorPinned; setCursor(cursorCycle); }
+function jumpToInput() {
+  const v = parseInt(document.getElementById('jumpCycle').value, 10);
+  if (!isNaN(v)) setCursor(v, true);
+}
+
+function drawPlayheads() {
+  ['svgCore', 'svgDma', 'svgSm'].forEach(id => {
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    // remove previous playhead line
+    const old = svg.querySelector('line.playhead, line.playhead-pinned');
+    if (old) old.remove();
+    const pw = svg.__panelW || W_TOTAL;
+    const x = cycleToX(cursorCycle, pw);
+    if (x < MARGIN.l - 1 || x > pw - MARGIN.r + 1) return;
+    const h = parseInt(svg.getAttribute('height') || '100', 10);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x);
+    line.setAttribute('x2', x);
+    line.setAttribute('y1', MARGIN.t - 4);
+    line.setAttribute('y2', h - MARGIN.b + 4);
+    line.setAttribute('class', cursorPinned ? 'playhead-pinned' : 'playhead');
+    svg.appendChild(line);
+  });
+}
+
+// --- Pan / Zoom helpers (shared state) ---
+function clampView() {
+  if (viewEnd - viewStart < 100) viewEnd = viewStart + 100;
+  if (viewStart < 0) { viewEnd -= viewStart; viewStart = 0; }
+  if (viewEnd > DATA.end_cycle) {
+    const span = viewEnd - viewStart;
+    viewEnd = DATA.end_cycle;
+    viewStart = Math.max(0, viewEnd - span);
+  }
+}
+function zoom(factor) {
+  const mid = (viewStart + viewEnd) / 2;
+  const span = (viewEnd - viewStart) / factor;
+  viewStart = mid - span / 2;
+  viewEnd = mid + span / 2;
+  clampView();
+  renderAll();
+}
+function pan(fracOfSpan) {
+  const span = viewEnd - viewStart;
+  viewStart += span * fracOfSpan;
+  viewEnd   += span * fracOfSpan;
+  clampView();
+  renderAll();
+}
+function resetZoom() {
+  viewStart = 0;
+  viewEnd = DATA.end_cycle;
+  renderAll();
+}
+
+// --- Pan / Zoom (once, attached to document) ---
+let dragging = false, dragX = 0, dragStart = 0, dragEnd = 0, dragPanel = null;
+let mousedownAt = null, movedDuringDrag = false;
+
+function attachPanHandlers(svg, panelW) {
+  svg.__panelW = panelW;
+  if (svg.__panAttached) return;
+  svg.__panAttached = true;
+  svg.style.cursor = 'crosshair';
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const pw = svg.__panelW;
+    const relX = Math.max(0, Math.min(1, (mx - MARGIN.l) / (pw - MARGIN.l - MARGIN.r)));
+    const cycAt = viewStart + (viewEnd - viewStart) * relX;
+    const factor = e.deltaY > 0 ? 1.2 : 0.83;
+    const span = (viewEnd - viewStart) * factor;
+    viewStart = cycAt - span * relX;
+    viewEnd = viewStart + span;
+    clampView();
+    renderAll();
+  }, {passive: false});
+  svg.addEventListener('mousedown', (e) => {
+    dragging = true; dragX = e.clientX;
+    dragStart = viewStart; dragEnd = viewEnd;
+    dragPanel = {panelW: svg.__panelW, svg: svg};
+    mousedownAt = {x: e.clientX, y: e.clientY};
+    movedDuringDrag = false;
+    svg.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  svg.addEventListener('mousemove', (e) => {
+    if (cursorPinned || dragging) return;
+    const rect = svg.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const pw = svg.__panelW;
+    if (mx < MARGIN.l || mx > pw - MARGIN.r) return;
+    const relX = (mx - MARGIN.l) / (pw - MARGIN.l - MARGIN.r);
+    setCursor(viewStart + (viewEnd - viewStart) * relX);
+  });
+}
+
+// one-shot global listeners (not recreated on each render)
+window.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  if (mousedownAt) {
+    const ddx = Math.abs(e.clientX - mousedownAt.x);
+    const ddy = Math.abs(e.clientY - mousedownAt.y);
+    if (ddx + ddy > 3) movedDuringDrag = true;
+  }
+  if (!movedDuringDrag) return;
+  const innerW = dragPanel.panelW - MARGIN.l - MARGIN.r;
+  const dx = e.clientX - dragX;
+  const dc = -dx / innerW * (dragEnd - dragStart);
+  viewStart = dragStart + dc;
+  viewEnd = dragEnd + dc;
+  clampView();
+  renderAll();
+});
+window.addEventListener('mouseup', (e) => {
+  if (dragging && !movedDuringDrag && dragPanel && dragPanel.svg) {
+    // treat as click → toggle pin at click cycle
+    const rect = dragPanel.svg.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const pw = dragPanel.panelW;
+    if (mx >= MARGIN.l && mx <= pw - MARGIN.r) {
+      const relX = (mx - MARGIN.l) / (pw - MARGIN.l - MARGIN.r);
+      setCursor(viewStart + (viewEnd - viewStart) * relX, !cursorPinned);
+    }
+  }
+  dragging = false;
+  mousedownAt = null;
+  movedDuringDrag = false;
+  ['svgCore', 'svgDma', 'svgSm'].forEach(id => {
+    const s = document.getElementById(id);
+    if (s) s.style.cursor = 'crosshair';
+  });
+});
+
+// keyboard pan/zoom: arrow keys + WASD + Space(toggle pin)
+window.addEventListener('keydown', (e) => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'arrowleft' || k === 'a')       pan(e.shiftKey ? -0.5 : -0.1);
+  else if (k === 'arrowright' || k === 'd') pan(e.shiftKey ?  0.5 :  0.1);
+  else if (k === 'arrowup' || k === 'w')    zoom(e.shiftKey ? 4 : 2);
+  else if (k === 'arrowdown' || k === 's')  zoom(e.shiftKey ? 0.25 : 0.5);
+  else if (k === ' ') togglePin();
+  else return;
+  e.preventDefault();
+});
+
+function renderAll() {
+  W_TOTAL = computeWidth();
+  renderCore(); renderDma(); renderSm();
+  drawPlayheads();
+  const ri = document.getElementById('rangeInfo');
+  if (ri) ri.textContent = '[' + Math.round(viewStart).toLocaleString() + ' ~ ' +
+    Math.round(viewEnd).toLocaleString() + '] cycles (span ' +
+    Math.round(viewEnd - viewStart).toLocaleString() + ')';
+}
+setCursor(0, false);
+renderAll();
+updateStatePanel();
+window.addEventListener('resize', renderAll);
+</script>
+</body>
+</html>
